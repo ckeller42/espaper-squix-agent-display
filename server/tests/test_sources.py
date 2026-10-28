@@ -139,6 +139,37 @@ def test_yahoo_error_shape_falls_back_to_previous_reading():
     assert reading == OLD_READING and is_stale is True
 
 
+def test_placeholder_extra_cannot_be_corrupted_across_calls():
+    first, _ = fetch_with_fallback(FailingSource(KeyError("x")), previous=None)
+    first.extra["corrupted"] = "1"
+    second, _ = fetch_with_fallback(FailingSource(KeyError("x")), previous=None)
+    assert second.extra == {}
+
+
+# Deliberately synthetic degenerate payloads (hand-written, not captured): each is a shape
+# Yahoo could plausibly return that used to escape as AttributeError/TypeError/OverflowError.
+def _quote_with_meta(**overrides):
+    payload = json.loads(json.dumps(QUOTE_FIXTURE))
+    payload["chart"]["result"][0]["meta"].update(overrides)
+    return payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"chart": None},
+        _quote_with_meta(regularMarketPrice=None),
+        _quote_with_meta(regularMarketTime=None),
+        _quote_with_meta(regularMarketTime=10**20),
+        _quote_with_meta(currency=None),
+    ],
+    ids=["chart-null", "price-null", "time-null", "time-out-of-range", "currency-null"],
+)
+def test_quote_parse_raises_value_error_on_null_or_invalid_fields(payload):
+    with pytest.raises(ValueError):
+        QuoteSource("NVDA")._parse(payload)
+
+
 def test_a_type_error_is_a_bug_and_is_not_swallowed():
     with pytest.raises(TypeError):
         fetch_with_fallback(FailingSource(TypeError("bug")), previous=OLD_READING)

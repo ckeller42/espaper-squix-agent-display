@@ -95,7 +95,9 @@ class QuoteSource:
         return self._parse(response.json())
 
     def _parse(self, payload: dict[str, Any]) -> Reading:
-        chart = payload["chart"]
+        chart = payload.get("chart")
+        if not isinstance(chart, dict):
+            raise ValueError(f"Yahoo payload for {self.symbol} has no chart object")
         if not chart.get("result"):
             error = chart.get("error") or {}
             raise ValueError(
@@ -105,6 +107,17 @@ class QuoteSource:
         meta = chart["result"][0]["meta"]
         currency = meta["currency"]
         price = meta["regularMarketPrice"]
+        market_time = meta["regularMarketTime"]
+        if not isinstance(currency, str):
+            raise ValueError(f"Yahoo meta for {self.symbol}: bad currency {currency!r}")
+        if not isinstance(price, (int, float)):
+            raise ValueError(f"Yahoo meta for {self.symbol}: bad regularMarketPrice {price!r}")
+        try:
+            observed_at = datetime.fromtimestamp(market_time, tz=timezone.utc)
+        except (TypeError, OverflowError, OSError) as exc:
+            raise ValueError(
+                f"Yahoo meta for {self.symbol}: bad regularMarketTime {market_time!r}"
+            ) from exc
         extra: dict[str, str] = {}
         previous = meta.get("chartPreviousClose")
         if previous is not None:
@@ -114,7 +127,7 @@ class QuoteSource:
             extra["exchange"] = meta["fullExchangeName"]
         return Reading(
             value=_money(price, currency),
-            observed_at=datetime.fromtimestamp(meta["regularMarketTime"], tz=timezone.utc),
+            observed_at=observed_at,
             label=meta.get("symbol", self.symbol),
             extra=extra,
         )
@@ -126,9 +139,11 @@ class QuoteSource:
 # shape. Anything else (TypeError included) is a bug and must propagate.
 FETCH_ERRORS = (httpx.HTTPError, ValueError, KeyError, IndexError)
 
-# observed_at for "never fetched": the epoch, so age_of reports decades rather than a
-# plausible-looking recent age.
-NO_DATA = Reading(value="—", observed_at=datetime.fromtimestamp(0, tz=timezone.utc), label="")
+def _no_data() -> Reading:
+    """Placeholder for "never fetched". A fresh object per call, because Reading.extra is a
+    mutable dict and a shared instance would let one consumer corrupt every later fallback.
+    observed_at is the epoch so age_of reports decades rather than a recent-looking age."""
+    return Reading(value="—", observed_at=datetime.fromtimestamp(0, tz=timezone.utc), label="")
 
 
 def fetch_with_fallback(source: Source, previous: Reading | None) -> tuple[Reading, bool]:
@@ -136,7 +151,7 @@ def fetch_with_fallback(source: Source, previous: Reading | None) -> tuple[Readi
     try:
         return source.fetch(), False
     except FETCH_ERRORS:
-        return (previous if previous is not None else NO_DATA), True
+        return (previous if previous is not None else _no_data()), True
 
 
 def age_of(reading: Reading, now: datetime) -> timedelta:
