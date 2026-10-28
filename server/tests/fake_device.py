@@ -5,6 +5,7 @@ One call to wake() is one boot-to-sleep cycle of the real device:
   * identity (id and secret) lives in `device_id` / `secret`, standing in for the flash settings;
   * with no stored id AND secret it registers, then asks for its screen (registerDevice());
   * with both stored it goes straight to GET .../screen (isDeviceRegistered());
+  * a boot that registered sleeps 60 s whatever the server said (the response is discarded);
   * 410 is the one status that clears the stored identity and restarts; the next boot has no
     identity, so it registers and fetches. Every other failure sleeps 60 s and keeps its identity;
   * the screen is decoded by the firmware's own algorithm, not by the server's unpacker.
@@ -71,6 +72,12 @@ class FakeDevice:
             "X-ESPAPER-SPIFFS-FREE": "1000000",
             "X-ESPAPER-SPIFFS-TOTAL": "1500000",
             "X-ESPAPER-WIFI-RSSI": "-60",
+            # buildOptionalHeaderFields(): appended to every screen request
+            "X-ESPAPER-TOTAL-DEVICE-STARTS": "1",
+            "X-ESPAPER-SUCCESSFUL-DEVICE-STARTS": "1",
+            "X-ESPAPER-LAST-NTP-SYNC-TIME": str(int(time.time())),
+            "X-ESPAPER-STARTS-WITHOUT-NTP-SYNC": "0",
+            "X-ESPAPER-LAST-CYCLE-DURATION": "4000",
         }
         response = httpx2.get(f"{self.base_url}/public/devices/{self.device_id}/screen", headers=headers)
         self.last_status = response.status_code
@@ -78,7 +85,8 @@ class FakeDevice:
 
     def _boot(self) -> tuple[Image.Image | None, int, bool]:
         """One boot. Returns (image, sleep seconds, restarted)."""
-        if not self.is_registered:
+        registered_now = not self.is_registered
+        if registered_now:
             try:
                 self.register()
             except (RegistrationFailed, httpx2.TransportError):
@@ -92,7 +100,12 @@ class FakeDevice:
             return None, RETRY_SECONDS, True
         if response.status_code != 200:
             return None, RETRY_SECONDS, False
-        return decode_payload(response.content), self._sleep_seconds(response.headers), False
+        image = decode_payload(response.content)
+        if registered_now:
+            # registerDevice() discards fetchAndDrawScreen()'s response, so setup() still holds its
+            # initial 60/60 and startDeviceSleep() sleeps 60 s, not the server's schedule.
+            return image, RETRY_SECONDS, False
+        return image, self._sleep_seconds(response.headers), False
 
     @staticmethod
     def _sleep_seconds(headers) -> int:
