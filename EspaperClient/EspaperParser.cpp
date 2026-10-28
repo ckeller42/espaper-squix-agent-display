@@ -115,7 +115,8 @@ EspaperParser::DeviceIdAndSecret EspaperParser::registerDevice(String requestPat
 
   }
 
-  if (!client->available() == 0) {
+  // Local fix: was `!client->available() == 0`, which parses as `(!available) == 0` and fires when data IS available.
+  if (client->available() == 0) {
     Serial.println("Client disconnected before body parsing");
   }
   delete client;
@@ -331,7 +332,8 @@ EspaperParser::ResourceResponse EspaperParser::downloadResource(Url url, String 
 
   }
 
-  if (!client->available() == 0) {
+  // Local fix: was `!client->available() == 0`, which parses as `(!available) == 0` and fires when data IS available.
+  if (client->available() == 0) {
     Serial.println("Client disconnected before body parsing");
   }
   Serial.println("Processing body");
@@ -375,7 +377,8 @@ EspaperParser::ResourceResponse EspaperParser::downloadResource(Url url, String 
       file.close();
       client->stop();
       delete client;
-      Serial.printf("Downloaded file %s with size %d", fileName.c_str(), downloadedBytes);
+      // Local fix: downloadedBytes is a long, so %ld (%d is a width mismatch off the 32-bit device).
+      Serial.printf("Downloaded file %s with size %ld", fileName.c_str(), downloadedBytes);
       Serial.println();
       Serial.print("[HTTP] connection closed or file end.\n");
       return response;
@@ -424,7 +427,8 @@ void EspaperParser::updateFirmware(String requestPath) {
       break;
 
     default:
-      Serial.printf_P(PSTR("%s is an unexpected return value. Did the library change?\n"), ret);
+      // Local fix: ret is an enum, not a char*; %s dereferenced it as a pointer. Print it as an integer.
+      Serial.printf_P(PSTR("%d is an unexpected return value. Did the library change?\n"), (int)ret);
       break;  
   }
  
