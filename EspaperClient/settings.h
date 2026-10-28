@@ -26,6 +26,25 @@
 
 #include <FS.h>
 
+/*
+ * Filesystem selection.
+ *
+ * SPIFFS is deprecated in ESP8266 Arduino core 3.x and warns on every use.
+ * LittleFS is its supported replacement with the same API, so the code below
+ * talks to DEVICE_FS and each platform binds it to what it actually has.
+ *
+ * NOTE: LittleFS and SPIFFS use INCOMPATIBLE on-flash formats. A device
+ * previously provisioned with a SPIFFS build will not find its stored config
+ * and will fall back to the setup access point once -- reconfigure it there.
+ */
+#if defined(ESP8266)
+  #include <LittleFS.h>
+  #define DEVICE_FS LittleFS
+#elif defined(ESP32)
+  #include <SPIFFS.h>
+  #define DEVICE_FS SPIFFS
+#endif
+
 /***************************
  * Device Type
  **************************/

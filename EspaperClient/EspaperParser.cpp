@@ -341,7 +341,7 @@ EspaperParser::ResourceResponse EspaperParser::downloadResource(Url url, String 
 
     // file found at server
     if (response.httpCode == 200) {
-      File file = SPIFFS.open(fileName, "w+");
+      File file = DEVICE_FS.open(fileName, "w+");
       if (!file) {
         Serial.println("Creating file failed: " + fileName);
       }

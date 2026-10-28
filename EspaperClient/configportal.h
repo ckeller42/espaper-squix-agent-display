@@ -121,7 +121,7 @@ String getFormField(String id, String placeholder, String length, String value, 
 
 
 boolean saveConfig() {
-  File f = SPIFFS.open(CONFIG_FILE, "w+");
+  File f = DEVICE_FS.open(CONFIG_FILE, "w+");
   if (!f) {
     Serial.println("Failed to open config file");
     return false;
@@ -146,7 +146,7 @@ boolean saveConfig() {
 }
 
 boolean loadConfig() {
-  File f = SPIFFS.open(CONFIG_FILE, "r");
+  File f = DEVICE_FS.open(CONFIG_FILE, "r");
   if (!f) {
     Serial.println("Failed to open config file");
     return false;
@@ -179,7 +179,7 @@ boolean loadConfig() {
     }
     // break infinite loop if file is present but somehow empty or corrupt
     if (key == "" && value == "") {
-      Serial.println(F("Config file available on SPIFFS but at least one line with empty key and value found. Exiting read loop."));
+      Serial.println(F("Config file available on the flash filesystem but at least one line with empty key and value found. Exiting read loop."));
       break;
     }
   }
@@ -195,7 +195,7 @@ boolean loadConfig() {
 
 
 void loadDeviceData(DeviceData *deviceData) {
-  File f = SPIFFS.open(DATA_FILE, "r");
+  File f = DEVICE_FS.open(DATA_FILE, "r");
   if (!f) {
     Serial.println(F("Failed to open data file. Initializing struct."));
     
@@ -232,7 +232,7 @@ void loadDeviceData(DeviceData *deviceData) {
     }
     // break infinite loop if file is present but somehow empty or corrupt
     if (key == "" && value == "") {
-      Serial.println(F("Device data file available on SPIFFS but at least one line with empty key and value found. Exiting read loop."));
+      Serial.println(F("Device data file available on the flash filesystem but at least one line with empty key and value found. Exiting read loop."));
       break;
     }
   }
@@ -242,7 +242,7 @@ void loadDeviceData(DeviceData *deviceData) {
 }
 
 void saveDeviceData(DeviceData* deviceData) {
-  File f = SPIFFS.open(DATA_FILE, "w+");
+  File f = DEVICE_FS.open(DATA_FILE, "w+");
   if (!f) {
     Serial.println(F("Failed to open data file"));
     return;
@@ -350,7 +350,7 @@ void sendRedirectToRoot() {
 
 void handleDelete() {
   Serial.println("Handling 'delete' request");
-  SPIFFS.remove(CONFIG_FILE);
+  DEVICE_FS.remove(CONFIG_FILE);
   resetUserSettings();
   sendRedirectToRoot();
 }
@@ -442,7 +442,7 @@ void startConfigPortal(MiniGrafx *gfx) {
   gfx->setColor(0);
   gfx->setTextAlignment(TEXT_ALIGN_CENTER);
 
-  File f = SPIFFS.open(CONFIG_FILE, "r");
+  File f = DEVICE_FS.open(CONFIG_FILE, "r");
   uint16_t halfWidth = gfx->getWidth() / 2;
   uint16_t maxTextWidth = gfx->getWidth() * MAX_TEXT_WIDTH_FACTOR;
   if (f) {

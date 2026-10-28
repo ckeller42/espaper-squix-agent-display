@@ -42,7 +42,20 @@ jobs:
             -v "$PWD:/project" -w /project \
             -u "$(id -u):$(id -g)" \
             squix-espaper-build:ci \
-            pio run -e Espaper29Bw-PROD
+            pio run -e Espaper29Bw-PROD 2>&1 | tee build.log
+          exit "${PIPESTATUS[0]}"
+
+      # A warning-free build is part of "done" here, so make CI enforce it
+      # instead of trusting everyone to read the scrollback. -Werror is not
+      # used because it would also fail on warnings from framework headers
+      # we do not control; this checks the build output we actually own.
+      - name: Fail on compiler warnings
+        run: |
+          if grep -iE "warning" build.log; then
+            echo "::error::Build produced warnings (see above). Fix them at the source."
+            exit 1
+          fi
+          echo "Build is warning-free."
 
       - name: Report size
         run: |

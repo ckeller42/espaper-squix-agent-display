@@ -141,20 +141,20 @@ uint32_t BoardClass::getFreeSPIFFSBytes() {
 
     #if defined(ESP8266) 
         FSInfo fs_info;
-        SPIFFS.info(fs_info);
+        DEVICE_FS.info(fs_info);
         return fs_info.totalBytes - fs_info.usedBytes;
     #elif defined(ESP32)
-        return SPIFFS.totalBytes() - SPIFFS.usedBytes();
+        return DEVICE_FS.totalBytes() - DEVICE_FS.usedBytes();
     #endif
 }
 
 uint32_t BoardClass::getTotalSPIFFSBytes() {
     #if defined(ESP8266) 
         FSInfo fs_info;
-        SPIFFS.info(fs_info);
+        DEVICE_FS.info(fs_info);
         return fs_info.totalBytes;
     #elif defined(ESP32)
-        return SPIFFS.totalBytes();
+        return DEVICE_FS.totalBytes();
     #endif
 }
 

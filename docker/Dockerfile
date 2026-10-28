@@ -32,6 +32,25 @@ COPY pio /project/pio
 ARG PIO_ENV=Espaper29Bw-PROD
 RUN pio pkg install -e "${PIO_ENV}"
 
+# framework-arduinoespressif8266 ships elf2bin.py with "\s" in plain (non-raw)
+# string literals, which Python 3.12 reports as SyntaxWarning on every build.
+# It is upstream's file, but it lives in our image, so fix it rather than let
+# every build print warnings we have trained ourselves to ignore.
+RUN python3 - <<'PATCH'
+import pathlib, py_compile
+p = pathlib.Path(
+    "/opt/pio/packages/framework-arduinoespressif8266/tools/elf2bin.py")
+src = p.read_text()
+fixed = src.replace("re.split('\\s+', line)", "re.split(r'\\s+', line)")
+assert fixed != src, "elf2bin.py no longer matches: re-check the upstream fix"
+p.write_text(fixed)
+# Fail the image build if any SyntaxWarning survives.
+import warnings
+warnings.simplefilter("error", SyntaxWarning)
+py_compile.compile(str(p), doraise=True)
+print("elf2bin.py: escape sequences fixed")
+PATCH
+
 # The container runs as the caller's UID (see scripts/dev.sh) so that files it
 # writes into the bind-mounted source tree stay owned by the host user. That
 # UID is not known at build time, so the shared PlatformIO dir must be writable

@@ -14,3 +14,4 @@ firmware.map
 
 # Scratch git worktrees
 .worktrees/
+build.log

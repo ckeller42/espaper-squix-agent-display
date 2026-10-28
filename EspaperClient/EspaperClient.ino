@@ -143,9 +143,9 @@ String buildOptionalHeaderFields(DeviceData *deviceData) {
 void formatFileSystem() {
   showMessage(String(F("File System error.\nFormatting File System\nPlease wait...")));
   Serial.println(F("Formating FS.."));
-  SPIFFS.format();
+  DEVICE_FS.format();
   Serial.println(F("Done Formatting"));
-  SPIFFS.begin();
+  DEVICE_FS.begin();
   showMessage(String(F("Done formatting...")));
 }
 
@@ -238,7 +238,7 @@ void setup() {
   pinMode(USR_BTN, INPUT_PULLUP);
   int btnState = digitalRead(USR_BTN);
   Serial.println(F("Checking FS"));
-  boolean isMounted = SPIFFS.begin();
+  boolean isMounted = DEVICE_FS.begin();
   if (!isMounted) {
     formatFileSystem();
   }

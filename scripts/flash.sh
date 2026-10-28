@@ -89,7 +89,15 @@ main() {
     echo
     echo "==> Put the ESPaper into flash mode now:"
     echo "      hold S0  ->  tap RST  ->  release RST  ->  release S0"
-    read -r -p "    press Enter when done "
+    # Only wait for a human when there IS one. Without this guard the read
+    # hits EOF under `set -e` (agent, CI, piped stdin) and kills the script.
+    # Once the ESP is in the bootloader it stays there until the next reset,
+    # so a non-interactive run is fine if you pressed the buttons first.
+    if [[ -t 0 ]]; then
+        read -r -p "    press Enter when done "
+    else
+        echo "    (non-interactive: assuming the device is already in flash mode)"
+    fi
 
     # no_reset on both ends: the ESPaper's programmer header carries power and
     # the two UART lines only -- DTR/RTS are not wired to GPIO0/RST, which is
@@ -98,8 +106,8 @@ main() {
     #
     # dout (not qio) matches board_build.flash_mode in platformio.ini.
     esptool --chip esp8266 --port "$port" --baud "$BAUD" \
-        --before no_reset --after no_reset \
-        write_flash --flash_mode dout --flash_size 2MB 0x0 "$FIRMWARE"
+        --before no-reset --after no-reset \
+        write-flash --flash-mode dout --flash-size 2MB 0x0 "$FIRMWARE"
 
     if [[ $do_monitor -eq 1 ]]; then
         echo "==> opening console at ${MONITOR_BAUD} (ctrl-] to quit)"
