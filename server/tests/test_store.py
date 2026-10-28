@@ -1,5 +1,5 @@
 import json
-import httpx
+import httpx2
 import pytest
 
 from espaper_server.packer import PAYLOAD_SIZE, pack_screen
@@ -15,7 +15,7 @@ class FakeSource:
 
     def fetch(self):
         if self.reading is None:
-            raise httpx.ConnectError("offline")
+            raise httpx2.ConnectError("offline")
         return self.reading
 
 
@@ -181,3 +181,19 @@ def test_bad_sleep_config_is_an_error_not_a_silent_default(tmp_path, bad):
     (tmp_path / "config.json").write_text(bad)
     with pytest.raises(ValueError):
         Store(tmp_path).sleep_seconds()
+
+
+def test_put_payload_rejects_a_wrong_sized_payload(tmp_path):
+    store = Store(tmp_path)
+    for bad in (b"", b"\x00" * 10, b"\x00" * (PAYLOAD_SIZE + 1)):
+        with pytest.raises(ValueError, match="4742"):
+            store.put_payload(bad)
+    assert store.current_payload() is None
+
+
+@pytest.mark.parametrize("damage", ["", "{not json", "[]", '{"mac": "AA"}'])
+def test_a_corrupt_device_record_is_unknown_not_an_error(tmp_path, damage):
+    store = Store(tmp_path)
+    device_id, secret = store.register_device("AA:BB", "Espaper29Bw", "UTC")
+    (tmp_path / "devices" / f"{device_id}.json").write_text(damage)
+    assert not store.authenticate(device_id, secret)

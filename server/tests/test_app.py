@@ -123,3 +123,9 @@ def test_rejected_requests_record_no_telemetry(client, store, device):
     dev, _ = device
     client.get(f"/public/devices/{dev}/screen", headers={"X-ESPAPER-SECRET": "bad", "X-ESPAPER-BATTERY": "1"})  # pragma: allowlist secret
     assert store.last_telemetry(dev) == {}
+
+
+def test_a_corrupt_device_record_gets_410_so_the_device_reregisters(client, tmp_path, device):
+    dev, auth = device
+    (tmp_path / "devices" / f"{dev}.json").write_text("{truncated")
+    assert client.get(f"/public/devices/{dev}/screen", headers=auth).status_code == 410

@@ -2,10 +2,10 @@
 name = "espaper-server"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["fastapi", "uvicorn", "pillow", "httpx", "tzdata"]
+dependencies = ["fastapi", "uvicorn", "pillow", "httpx2", "tzdata"]
 
 [dependency-groups]
-dev = ["pytest", "httpx2"]
+dev = ["pytest"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

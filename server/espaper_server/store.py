@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from espaper_server.packer import pack_screen
+from espaper_server.packer import PAYLOAD_SIZE, pack_screen
 from espaper_server.recipe import Panel, Recipe
 from espaper_server.render import render
 from espaper_server.sources import QuoteSource, Reading, Source, WeatherSource, fetch_with_fallback
@@ -100,8 +100,13 @@ class Store:
         path = self._device_path(device_id)
         if path is None or not path.exists():
             return False
-        stored = json.loads(path.read_text())["secret_sha256"]
-        return hmac.compare_digest(stored, _hash(secret))
+        try:
+            stored = json.loads(path.read_text())["secret_sha256"]
+            return hmac.compare_digest(stored, _hash(secret))
+        except (OSError, ValueError, KeyError, TypeError):
+            # A damaged record counts as unknown: the caller answers 410 and the device
+            # re-registers. Raising here would answer 500 and strand it, never clearing identity.
+            return False
 
     def forget(self, device_id: str) -> None:
         path = self._device_path(device_id)
@@ -115,6 +120,8 @@ class Store:
         return path.read_bytes() if path.exists() else None
 
     def put_payload(self, data: bytes) -> None:
+        if len(data) != PAYLOAD_SIZE:
+            raise ValueError(f"a screen payload is exactly {PAYLOAD_SIZE} bytes, got {len(data)}")
         self._write("screen.bin", data)
 
     def propose(self, recipe: Recipe) -> None:

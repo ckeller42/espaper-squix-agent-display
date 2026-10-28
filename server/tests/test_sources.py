@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from espaper_server.sources import (
@@ -104,8 +104,8 @@ class WorkingSource:
 
 
 TRANSPORT_AND_PARSE_ERRORS = [
-    httpx.ReadTimeout("timed out"),
-    httpx.ConnectError("unreachable"),
+    httpx2.ReadTimeout("timed out"),
+    httpx2.ConnectError("unreachable"),
     KeyError("chart"),
 ]
 
@@ -219,14 +219,14 @@ def test_a_type_error_is_a_bug_and_is_not_swallowed():
 
 def test_timeout_falls_back_to_previous_reading():
     reading, is_stale = fetch_with_fallback(
-        FailingSource(httpx.ReadTimeout("timed out")), previous=OLD_READING
+        FailingSource(httpx2.ReadTimeout("timed out")), previous=OLD_READING
     )
     assert reading == OLD_READING and is_stale is True
 
 
 def test_timeout_without_a_previous_reading_does_not_raise():
     reading, is_stale = fetch_with_fallback(
-        FailingSource(httpx.ReadTimeout("timed out")), previous=None
+        FailingSource(httpx2.ReadTimeout("timed out")), previous=None
     )
     assert is_stale is True and reading.value == "—"
 
@@ -259,3 +259,19 @@ def test_placeholder_age_is_never_mistaken_for_fresh():
 
 def test_age_is_measured_from_the_providers_timestamp():
     assert age_of(OLD_READING, now=FIXED_NOW) == timedelta(hours=15)
+
+
+def test_real_httpx2_failures_are_covered_by_fetch_errors():
+    """Guards the tuple itself: a restructured exception hierarchy would stop matching silently."""
+    import socket
+
+    from espaper_server.sources import FETCH_ERRORS
+
+    with socket.socket() as s:  # a local port nothing listens on: refused, no network involved
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    with pytest.raises(FETCH_ERRORS):
+        httpx2.get(f"http://127.0.0.1:{port}/", timeout=2)
+    response = httpx2.Response(503, request=httpx2.Request("GET", "http://example.invalid/"))
+    with pytest.raises(FETCH_ERRORS):
+        response.raise_for_status()

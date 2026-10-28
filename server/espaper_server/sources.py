@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
-import httpx
+import httpx2
 
-TIMEOUT = httpx.Timeout(10.0)
+TIMEOUT = httpx2.Timeout(10.0)
 BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -41,7 +41,7 @@ class WeatherSource:
         self.timezone = timezone
 
     def fetch(self) -> Reading:
-        response = httpx.get(
+        response = httpx2.get(
             self.URL,
             params={
                 "latitude": self.latitude,
@@ -85,7 +85,7 @@ class QuoteSource:
         self.symbol = symbol
 
     def fetch(self) -> Reading:
-        response = httpx.get(
+        response = httpx2.get(
             self.URL.format(symbol=self.symbol),
             params={"interval": "1d", "range": "1d"},
             headers={"User-Agent": BROWSER_UA},
@@ -141,10 +141,10 @@ class QuoteSource:
 
 
 # Failures that mean "the source is unreachable or answered with something we can't read".
-# httpx.HTTPError covers timeouts, connection errors and non-2xx (raise_for_status);
+# httpx2.HTTPError covers timeouts, connection errors and non-2xx (raise_for_status);
 # ValueError covers invalid JSON and timestamps; KeyError/IndexError cover a changed API
 # shape. Anything else (TypeError included) is a bug and must propagate.
-FETCH_ERRORS = (httpx.HTTPError, ValueError, KeyError, IndexError)
+FETCH_ERRORS = (httpx2.HTTPError, ValueError, KeyError, IndexError)
 
 def _no_data() -> Reading:
     """Placeholder for "never fetched". A fresh object per call, because Reading.extra is a
