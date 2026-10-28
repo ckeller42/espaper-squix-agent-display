@@ -6,8 +6,10 @@ One call to wake() is one boot-to-sleep cycle of the real device:
   * with no stored id AND secret it registers, then asks for its screen (registerDevice());
   * with both stored it goes straight to GET .../screen (isDeviceRegistered());
   * a boot that registered sleeps 60 s whatever the server said (the response is discarded);
-  * 410 is the one status that clears the stored identity and restarts; the next boot has no
-    identity, so it registers and fetches. Every other failure sleeps 60 s and keeps its identity;
+  * 410 is the one status that clears the stored identity; the next boot has no identity, so it
+    registers and fetches. The FIRST 410 restarts at once; a repeat (`consecutive_gone` >= 2, kept in
+    the data file, cleared by any 200) sleeps 60 s instead, see goneGuard.h. Every other failure
+    sleeps 60 s and keeps its identity;
   * the screen is decoded by the firmware's own algorithm, not by the server's unpacker.
 """
 
@@ -23,11 +25,16 @@ DEVICE_TYPE = "Espaper29Bw"
 TIMEZONE = "Europe/Berlin"
 RETRY_SECONDS = 60  # EspaperClient.ino: the sleep after any failure
 DEFAULT_SLEEP_SECONDS = 20 * 60  # UPDATE_INTERVAL_MINS stand-in, used when the server gives no deadline
+MAX_BOOTS_PER_WAKE = 20
 MAX_SLEEP_DISAGREEMENT = 600  # startDeviceSleep(): beyond this the clock is distrusted
 
 
 class RegistrationFailed(Exception):
     pass
+
+
+class RebootLoop(Exception):
+    """The device restarted over and over without ever deep-sleeping."""
 
 
 class FakeDevice:
@@ -38,6 +45,9 @@ class FakeDevice:
         self.device_id = ""
         self.secret = ""
         self.last_status = 0
+        self.consecutive_gone = 0  # CONSECUTIVE_GONE in the flash data file
+        self.restarts = 0  # ESP.restart() calls: no sleep, radio up
+        self.sleeps = 0  # deep sleeps
         self._started = time.monotonic()
 
     @property
@@ -96,10 +106,15 @@ class FakeDevice:
         except httpx2.TransportError:
             return None, RETRY_SECONDS, False
         if response.status_code == 410:
-            self.device_id = self.secret = ""  # saveDeviceRegistration("", ""); ESP.restart()
+            self.consecutive_gone += 1
+            self.device_id = self.secret = ""  # saveDeviceRegistration("", "")
+            if self.consecutive_gone >= 2:
+                return None, RETRY_SECONDS, False  # epd.Sleep(); Board.deepSleep(60), no restart
+            self.restarts += 1  # ESP.restart()
             return None, RETRY_SECONDS, True
         if response.status_code != 200:
             return None, RETRY_SECONDS, False
+        self.consecutive_gone = 0
         image = decode_payload(response.content)
         if registered_now:
             # registerDevice() discards fetchAndDrawScreen()'s response, so setup() still holds its
@@ -119,9 +134,12 @@ class FakeDevice:
         return seconds if abs(seconds - effective) > MAX_SLEEP_DISAGREEMENT else effective
 
     def wake(self) -> tuple[Image.Image | None, int]:
-        """Boot, fetch the screen, and report (image, seconds to sleep). A restart caused by 410
-        is a second boot within the same call; a second 410 in a row is left to the next wake."""
-        image, sleep_s, restarted = self._boot()
-        if restarted:
-            image, sleep_s, _ = self._boot()
-        return image, sleep_s
+        """Boot, fetch the screen, and report (image, seconds to sleep). A restart is another boot
+        with no sleep in between, so this loops until the firmware sleeps. A firmware that never
+        sleeps would loop for ever, hence the cap: hitting it IS the reboot loop."""
+        for _ in range(MAX_BOOTS_PER_WAKE):
+            image, sleep_s, restarted = self._boot()
+            if not restarted:
+                self.sleeps += 1
+                return image, sleep_s
+        raise RebootLoop(f"{MAX_BOOTS_PER_WAKE} boots in a row without a sleep")

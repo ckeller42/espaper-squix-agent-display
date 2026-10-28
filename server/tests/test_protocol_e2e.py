@@ -53,6 +53,50 @@ def test_410_makes_the_device_reregister(live_server):
     assert live_server.store.authenticate(d.device_id, d.secret)
 
 
+def _server_that_always_answers_410(device):
+    """A server bug, a wiped data directory or a half-applied migration: 410 even right after registering."""
+
+    class Gone:
+        status_code, headers, content = 410, {}, b""
+
+    def fetch():
+        device.last_status = 410
+        return Gone()
+
+    device._fetch_screen = fetch
+
+
+def test_a_single_410_recovers_without_sleeping_first(live_server):
+    d = FakeDevice(live_server)
+    d.register()
+    live_server.store.forget(d.device_id)
+    d.wake()
+    # the healthy case stays fast: one instant restart, then a normal boot
+    assert d.restarts == 1 and d.sleeps == 1
+
+
+def test_repeated_410_does_not_reboot_continuously(live_server):
+    # Three 410s in a row must produce at least one sleep, not three instant restarts.
+    d = FakeDevice(live_server)
+    _server_that_always_answers_410(d)
+    d.wake()
+    d.wake()
+    assert d.last_status == 410
+    assert d.sleeps >= 1
+    assert d.restarts <= 1  # the first 410 may restart; a repeat must sleep instead
+
+
+def test_a_screen_after_a_410_resets_the_count(live_server):
+    d = FakeDevice(live_server)
+    d.register()
+    live_server.store.forget(d.device_id)
+    d.wake()  # 410, restart, recovers
+    live_server.store.forget(d.device_id)
+    restarts_before = d.restarts
+    d.wake()  # a later, unrelated 410 is a first one again
+    assert d.restarts == restarts_before + 1
+
+
 def test_an_approved_recipe_reaches_the_device(live_server):
     live_server.store.approve(RECIPE)
     d = FakeDevice(live_server)

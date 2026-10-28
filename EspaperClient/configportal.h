@@ -100,6 +100,7 @@ typedef struct DeviceData {
   uint8_t startsWithoutNtpSync;
   uint32_t lastCycleDuration;
   uint8_t actionAfterReboot;
+  uint8_t consecutiveGone;  // FORK: 410s since the last good screen (goneGuard.h)
 } DeviceData;
 
 
@@ -247,13 +248,18 @@ void loadDeviceData(DeviceData *deviceData) {
     deviceData->startsWithoutNtpSync = 0;
     deviceData->lastCycleDuration = 0;
     deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPDATE_SCREEN;
+    deviceData->consecutiveGone = 0;
     return;
   }
+  deviceData->consecutiveGone = 0;  // absent in files written before this key existed
   while (f.available()) {
     String key = f.readStringUntil('=');
     String value = f.readStringUntil('\r');
     f.read();
     Serial.println(key + " = [" + value + "]");
+    if (key == "CONSECUTIVE_GONE") {
+      deviceData->consecutiveGone = value.toInt();
+    }
     if (key == "TOTAL_DEVICE_STARTS") {
       deviceData->totalDeviceStarts = value.toInt();
     }
@@ -301,6 +307,8 @@ void saveDeviceData(DeviceData* deviceData) {
   f.println(deviceData->lastCycleDuration);
   f.print(F("ACTION_AFTER_REBOOT="));
   f.println(deviceData->actionAfterReboot);
+  f.print(F("CONSECUTIVE_GONE="));
+  f.println(deviceData->consecutiveGone);
   f.close();
   Serial.println(F("Saved values in data file."));
 }

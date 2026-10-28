@@ -13,6 +13,7 @@
 
 #include "../../EspaperClient/configportal.h"
 #include "../../EspaperClient/discovery.h"
+#include "../../EspaperClient/goneGuard.h"
 
 // board_stubs.h (the other translation unit) defines the rest of BoardClass; the portal's info page
 // also asks for the chip id.
@@ -188,6 +189,44 @@ void test_blanking_the_portal_field_returns_to_the_default_and_to_discoverable()
   TEST_ASSERT_TRUE(saveDiscoveredServerUrl("http://192.168.1.9:8411"));  // the owner gave up control
 }
 
+// ---- Task 7: a repeated 410 sleeps instead of restarting -------------------------------------------
+
+static DeviceData freshDeviceData() {
+  DEVICE_FS.files.erase("/device-data.txt");
+  DeviceData d;
+  loadDeviceData(&d);  // no file: the struct is initialised
+  return d;
+}
+
+void test_the_first_410_restarts_and_a_repeat_sleeps() {
+  DeviceData d = freshDeviceData();
+  TEST_ASSERT_FALSE(recordGoneShouldSleep(&d));  // the healthy case stays fast
+  TEST_ASSERT_TRUE(recordGoneShouldSleep(&d));
+  TEST_ASSERT_TRUE(recordGoneShouldSleep(&d));  // and keeps sleeping while the 410s continue
+}
+
+void test_a_screen_resets_the_410_count() {
+  DeviceData d = freshDeviceData();
+  recordGoneShouldSleep(&d);
+  clearGoneCount(&d);
+  TEST_ASSERT_FALSE(recordGoneShouldSleep(&d));
+}
+
+void test_the_410_count_survives_the_restart_it_precedes() {
+  DeviceData d = freshDeviceData();
+  recordGoneShouldSleep(&d);
+  saveDeviceData(&d);  // what the 410 path does before ESP.restart()
+  DeviceData reborn;
+  loadDeviceData(&reborn);
+  TEST_ASSERT_TRUE(recordGoneShouldSleep(&reborn));
+}
+
+void test_the_410_count_saturates_instead_of_wrapping_to_zero() {
+  DeviceData d = freshDeviceData();
+  for (int i = 0; i < 600; i++) recordGoneShouldSleep(&d);
+  TEST_ASSERT_TRUE(recordGoneShouldSleep(&d));
+}
+
 void run_settings_tests() {
   UnitySetTestFile(__FILE__);  // so failures name this file, not the one that owns main()
   RUN_TEST(test_stored_server_url_overrides_the_compiled_default);
@@ -202,4 +241,8 @@ void run_settings_tests() {
   RUN_TEST(test_a_url_stored_before_the_source_key_existed_counts_as_manual);
   RUN_TEST(test_resaving_the_portal_does_not_turn_a_discovered_url_into_a_manual_one);
   RUN_TEST(test_blanking_the_portal_field_returns_to_the_default_and_to_discoverable);
+  RUN_TEST(test_the_first_410_restarts_and_a_repeat_sleeps);
+  RUN_TEST(test_a_screen_resets_the_410_count);
+  RUN_TEST(test_the_410_count_survives_the_restart_it_precedes);
+  RUN_TEST(test_the_410_count_saturates_instead_of_wrapping_to_zero);
 }

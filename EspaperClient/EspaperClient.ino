@@ -41,6 +41,7 @@
 #include "EspaperParser.h"
 #include "serverTrust.h"
 #include "discovery.h"
+#include "goneGuard.h"
 
 #define MINI_BLACK 0
 #define MINI_WHITE 1
@@ -202,8 +203,24 @@ EspaperParser::ResourceResponse fetchAndDrawScreen(EspaperParser *parser, Device
     response = parser->getAndDrawScreen(SERVER_API_DEVICES_PATH + "/" + DEVICE_ID + "/screen", buildOptionalHeaderFields(deviceData), &BoardClass::sleepWifi);
     // 410 and update requests are the server speaking: handled (and restarted on) before any judgement.
     if (response.httpCode == 410) {
+      // FORK CHANGE (goneGuard.h): the first 410 restarts at once, as upstream; a repeat sleeps first
+      // so a server that keeps answering 410 cannot hold the device in a reboot loop.
+      bool sleepFirst = recordGoneShouldSleep(deviceData);
+      saveDeviceData(deviceData);  // before restart/sleep, or the count is lost. One write, 410 path only.
       saveDeviceRegistration("", "");
+      if (sleepFirst) {
+        Serial.println(F("Repeated 410 from server; sleeping instead of restarting"));
+        epd.Sleep();
+        Board.deepSleep(GONE_RETRY_SLEEP_SECONDS);
+        // ESP.deepSleep() takes effect asynchronously on the ESP8266; never fall through to the restart.
+        while (true) {
+          delay(100);
+        }
+      }
       ESP.restart();
+    }
+    if (response.httpCode == 200) {
+      clearGoneCount(deviceData);  // persisted by setup()'s saveDeviceData() at the end of this boot
     }
     if (response.httpCode == HTTP_INTERNAL_CODE_UPGRADE_CLIENT) {
       Serial.println(F("Firmware upgrade requested by server"));
