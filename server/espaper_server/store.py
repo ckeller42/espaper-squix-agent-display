@@ -16,6 +16,7 @@ person approves a recipe, never while a device is waiting for a response.
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 from collections.abc import Callable, Mapping
@@ -24,10 +25,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from espaper_server.packer import PAYLOAD_SIZE, pack_screen
+from espaper_server.packer import PAYLOAD_SIZE, is_valid_payload, pack_screen
 from espaper_server.recipe import Panel, Recipe
 from espaper_server.render import render
 from espaper_server.sources import QuoteSource, Reading, Source, WeatherSource, fetch_with_fallback
+
+log = logging.getLogger(__name__)
 
 DEFAULT_SLEEP_SECONDS = 3600  # used only when config.json does not say otherwise
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]+")
@@ -117,12 +120,23 @@ class Store:
     # -- the screen -------------------------------------------------------------------------
 
     def current_payload(self) -> bytes | None:
+        """The stored screen, or None when there is none or it is not a valid payload. The device
+        has no error channel, so a file that something other than put_payload dropped on the shelf
+        (truncated, wrong header) is refused here rather than served."""
         path = self.root / "screen.bin"
-        return path.read_bytes() if path.exists() else None
+        if not path.exists():
+            return None
+        data = path.read_bytes()
+        if not is_valid_payload(data):
+            log.error("%s is not a valid screen payload (%d bytes); ignoring it", path, len(data))
+            return None
+        return data
 
     def put_payload(self, data: bytes) -> None:
-        if len(data) != PAYLOAD_SIZE:
-            raise ValueError(f"a screen payload is exactly {PAYLOAD_SIZE} bytes, got {len(data)}")
+        if not is_valid_payload(data):
+            raise ValueError(
+                f"a screen payload is exactly {PAYLOAD_SIZE} bytes with a valid 6-byte header, got {len(data)} bytes"
+            )
         self._write("screen.bin", data)
         self._write("rendered_at", self._clock().isoformat())
 

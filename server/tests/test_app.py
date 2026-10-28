@@ -8,7 +8,7 @@ import espaper_server.app as app_module
 from espaper_server.app import create_app
 from espaper_server.packer import PAYLOAD_SIZE, pack_screen
 from espaper_server.store import Store
-from tests.recipes import FIXED_NOW, READINGS, RECIPE
+from tests.recipes import FIXED_NOW, READINGS, RECIPE, filled_payload
 from tests.test_store import factory_for
 
 REGISTER = {"macAddress": "AA:BB", "deviceType": "Espaper29Bw", "timeZone": "Europe/Berlin"}
@@ -44,9 +44,9 @@ def test_registration_rejects_a_malformed_body(client):
 
 def test_screen_returns_the_exact_payload_and_sleep_headers(client, store, device):
     dev, auth = device
-    store.put_payload(b"\x07" * PAYLOAD_SIZE)
+    store.put_payload(filled_payload(7))
     r = client.get(f"/public/devices/{dev}/screen", headers=auth)
-    assert r.status_code == 200 and r.content == b"\x07" * PAYLOAD_SIZE
+    assert r.status_code == 200 and r.content == filled_payload(7)
     assert r.headers["Content-Type"] == "application/octet-stream"
     seconds = int(r.headers["X-ESPAPER-SLEEP-SECONDS"])
     assert seconds == store.sleep_seconds() > 0
@@ -104,13 +104,13 @@ def test_fallback_is_made_at_startup_and_identical_on_every_request(store, monke
 
 def test_an_approved_payload_replaces_the_fallback(client, store, device):
     dev, auth = device
-    store.put_payload(b"\x09" * PAYLOAD_SIZE)
-    assert client.get(f"/public/devices/{dev}/screen", headers=auth).content == b"\x09" * PAYLOAD_SIZE
+    store.put_payload(filled_payload(9))
+    assert client.get(f"/public/devices/{dev}/screen", headers=auth).content == filled_payload(9)
 
 
 def test_update_command_header_is_never_sent(client, store, device):
     dev, auth = device
-    for payload in (None, b"\x00" * PAYLOAD_SIZE):
+    for payload in (None, filled_payload(0)):
         if payload:
             store.put_payload(payload)
         r = client.get(f"/public/devices/{dev}/screen", headers={**auth, "X-ESPAPER-CLIENT-VERSION": "V001"})
@@ -191,3 +191,38 @@ def test_preview_txt_is_plain_text_art_of_the_served_screen(approved):
     lines = r.text.rstrip("\n").split("\n")
     assert len(lines) == 16 and {len(line) for line in lines} == {74}
     assert r.text.strip()  # the weather and quote panels leave ink
+
+
+# A screen.bin that did not come through put_payload (an agent dropping a pre-rendered file on the
+# shelf, a half-written copy) must never reach the device, which has no error channel.
+def _corrupt_screen_bin(tmp_path, kind):
+    good = filled_payload(5)
+    (tmp_path / "screen.bin").write_bytes(
+        {
+            "truncated": good[:100],
+            "empty": b"",
+            "oversized": good + b"\x00",
+            "bad-header": b"\x02" + good[1:],
+        }[kind]
+    )
+
+
+CORRUPTIONS = ["truncated", "empty", "oversized", "bad-header"]
+
+
+@pytest.mark.parametrize("kind", CORRUPTIONS)
+def test_device_gets_the_waiting_screen_not_a_malformed_payload(client, device, tmp_path, caplog, kind):
+    dev, auth = device
+    waiting = client.get(f"/public/devices/{dev}/screen", headers=auth).content  # nothing stored yet
+    _corrupt_screen_bin(tmp_path, kind)
+    with caplog.at_level("ERROR"):
+        r = client.get(f"/public/devices/{dev}/screen", headers=auth)
+    assert r.status_code == 200 and r.content == waiting and len(r.content) == PAYLOAD_SIZE
+    assert "not a valid screen payload" in caplog.text
+
+
+@pytest.mark.parametrize("kind", CORRUPTIONS)
+def test_preview_survives_a_malformed_stored_payload(client, tmp_path, kind):
+    _corrupt_screen_bin(tmp_path, kind)
+    assert client.get("/preview.png").status_code == 200
+    assert client.get("/preview.txt").status_code == 200

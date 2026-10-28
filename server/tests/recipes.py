@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 
+from espaper_server.packer import HEADER, PAYLOAD_SIZE
 from espaper_server.recipe import Panel, Recipe
 from espaper_server.sources import Reading
 
@@ -48,3 +49,8 @@ READINGS = [
         extra={"previous_close": "$216.61", "change": "-$0.76", "exchange": "NasdaqGS"},
     ),
 ]
+
+
+def filled_payload(byte: int) -> bytes:
+    """A well-formed payload (valid header) whose pixel bytes are all `byte`."""
+    return HEADER + bytes([byte]) * (PAYLOAD_SIZE - len(HEADER))

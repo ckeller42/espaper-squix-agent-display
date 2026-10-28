@@ -6,7 +6,7 @@ from espaper_server.packer import PAYLOAD_SIZE, pack_screen
 from espaper_server.recipe import Recipe
 from espaper_server.render import render
 from espaper_server.store import DEFAULT_SLEEP_SECONDS, Store
-from tests.recipes import FIXED_NOW, READINGS, RECIPE
+from tests.recipes import FIXED_NOW, READINGS, RECIPE, filled_payload
 
 
 class FakeSource:
@@ -66,8 +66,8 @@ def test_hostile_device_ids_are_simply_unknown(tmp_path, bad_id):
 def test_payload_roundtrip_and_empty_default(tmp_path):
     store = Store(tmp_path)
     assert store.current_payload() is None
-    store.put_payload(b"\x01" * PAYLOAD_SIZE)
-    assert Store(tmp_path).current_payload() == b"\x01" * PAYLOAD_SIZE
+    store.put_payload(filled_payload(1))
+    assert Store(tmp_path).current_payload() == filled_payload(1)
 
 
 def test_nothing_is_approved_at_first(tmp_path):
@@ -77,10 +77,10 @@ def test_nothing_is_approved_at_first(tmp_path):
 
 def test_proposed_recipe_is_pending_and_leaves_the_screen_alone(tmp_path):
     store = make_store(tmp_path)
-    store.put_payload(b"\x02" * PAYLOAD_SIZE)
+    store.put_payload(filled_payload(2))
     store.propose(RECIPE)
     assert store.pending_recipe() == RECIPE and not store.is_approved()
-    assert store.current_payload() == b"\x02" * PAYLOAD_SIZE
+    assert store.current_payload() == filled_payload(2)
 
 
 def test_approve_renders_and_stores_the_payload(tmp_path):
@@ -197,3 +197,17 @@ def test_a_corrupt_device_record_is_unknown_not_an_error(tmp_path, damage):
     device_id, secret = store.register_device("AA:BB", "Espaper29Bw", "UTC")
     (tmp_path / "devices" / f"{device_id}.json").write_text(damage)
     assert not store.authenticate(device_id, secret)
+
+
+@pytest.mark.parametrize("kind", ["truncated", "bad-header"])
+def test_current_payload_refuses_a_file_that_is_not_a_screen(tmp_path, kind):
+    good = filled_payload(5)
+    (tmp_path / "screen.bin").write_bytes(good[:100] if kind == "truncated" else b"\x02" + good[1:])
+    assert Store(tmp_path).current_payload() is None
+
+
+def test_put_payload_rejects_a_right_sized_payload_with_a_bad_header(tmp_path):
+    store = Store(tmp_path)
+    with pytest.raises(ValueError, match="header"):
+        store.put_payload(b"\x00" * PAYLOAD_SIZE)
+    assert store.current_payload() is None

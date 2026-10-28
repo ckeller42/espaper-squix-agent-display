@@ -17,20 +17,26 @@ PAYLOAD_SIZE = HEADER_SIZE + ROW_BYTES * SCREEN_HEIGHT
 VERSION = 1
 
 
+HEADER = bytes([VERSION, 1]) + SCREEN_WIDTH.to_bytes(2, "big") + SCREEN_HEIGHT.to_bytes(2, "big")
+
+
+def is_valid_payload(data: bytes) -> bool:
+    """True when data is exactly one screen: the right length and the 6-byte header."""
+    return len(data) == PAYLOAD_SIZE and data[:HEADER_SIZE] == HEADER
+
+
 def pack_screen(image: Image.Image) -> bytes:
     if image.mode != "1" or image.size != (SCREEN_WIDTH, SCREEN_HEIGHT):
         raise ValueError(
             f"expected a 1-bit {SCREEN_WIDTH}x{SCREEN_HEIGHT} image, "
             f"got mode {image.mode!r} size {image.size}"
         )
-    header = bytes([VERSION, 1]) + SCREEN_WIDTH.to_bytes(2, "big") + SCREEN_HEIGHT.to_bytes(2, "big")
     # PIL mode "1" raw rows are already MSB-first, byte-padded per row, 1 = white.
-    return header + image.tobytes()
+    return HEADER + image.tobytes()
 
 
 def unpack_screen(data: bytes) -> Image.Image:
     """The inverse of pack_screen: the exact image a payload puts on the panel."""
-    header = bytes([VERSION, 1]) + SCREEN_WIDTH.to_bytes(2, "big") + SCREEN_HEIGHT.to_bytes(2, "big")
-    if len(data) != PAYLOAD_SIZE or data[:HEADER_SIZE] != header:
+    if not is_valid_payload(data):
         raise ValueError(f"not a {SCREEN_WIDTH}x{SCREEN_HEIGHT} 1-bit screen payload of {PAYLOAD_SIZE} bytes")
     return Image.frombytes("1", (SCREEN_WIDTH, SCREEN_HEIGHT), data[HEADER_SIZE:])
