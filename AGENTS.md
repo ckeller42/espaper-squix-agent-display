@@ -14,7 +14,12 @@ device renders screens pushed by an agent via a server on the LAN.
   at the call site so `git pull upstream master` stays reviewable.
 
 ## Build / flash
-- `./scripts/gate.sh` = secret scan + containerised build + warning gate (mirrors CI).
+- `./scripts/gate.sh` = secret scan + server suite + native firmware tests +
+  containerised build + warning gate (mirrors CI; skips steps whose tool is
+  missing, with a message). **The device is the last tier — do not flash until
+  those are green.** Layers: `docs/simulation-and-testing.md`.
+- Always pass `-e` to `pio` (`pio test -e native`); `default_envs` is native and
+  `pio test -e <device env>` fails by design.
 - `./scripts/dev.sh build|clean|size|shell` — build only. `SQUIX_ENV` picks the
   PlatformIO env (default `Espaper29Bw-PROD`).
 - `./scripts/flash.sh` — flashes from the **host**. `SQUIX_PORT` overrides port
