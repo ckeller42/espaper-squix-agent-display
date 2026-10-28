@@ -9,7 +9,10 @@
 #include <MiniGrafxFonts.h>
 #include <unity.h>
 
+#include <ESP8266mDNS.h>  // host shim: scripted answers
+
 #include "../../EspaperClient/configportal.h"
+#include "../../EspaperClient/discovery.h"
 
 // board_stubs.h (the other translation unit) defines the rest of BoardClass; the portal's info page
 // also asks for the chip id.
@@ -95,6 +98,96 @@ void test_the_portal_form_offers_the_server_url_field() {
   TEST_ASSERT_NOT_EQUAL(std::string::npos, server.sent.find("value='http://odelly.local:8411'"));
 }
 
+// ---- Task 4: what discovery does to the stored setting. These live here, not in test_discovery.cpp,
+// because only this translation unit may include configportal.h (its functions are not inline).
+
+void test_a_discovered_url_is_persisted_for_next_wake() {
+  resetPortalState();
+  storeConfig("");  // a device with no stored server: it runs on the compiled default
+  TEST_ASSERT_TRUE(loadConfig());
+  TEST_ASSERT_EQUAL_STRING("", SERVER_URL_SOURCE.c_str());  // absent source key == compiled default
+
+  MDNS.reset();
+  MDNS.answers = {{IPAddress(192, 168, 1, 9), 8411}};
+  String found = discoverServer();
+  TEST_ASSERT_TRUE(saveDiscoveredServerUrl(found));
+
+  resetUserSettings();  // next wake: RAM is back to the compiled defaults
+  TEST_ASSERT_TRUE(loadConfig());
+  TEST_ASSERT_EQUAL_STRING("http://192.168.1.9:8411", SERVER_URL.c_str());
+  TEST_ASSERT_EQUAL_STRING("discovered", SERVER_URL_SOURCE.c_str());
+  MDNS.reset();
+}
+
+void test_a_discovered_url_may_be_replaced_by_a_later_discovery() {
+  resetPortalState();
+  storeConfig("SERVER_URL=http://192.168.1.9:8411\r\nSERVER_URL_SOURCE=discovered\r\n");
+  TEST_ASSERT_TRUE(loadConfig());
+  TEST_ASSERT_TRUE(saveDiscoveredServerUrl("http://10.0.0.8:8411"));
+  resetUserSettings();
+  TEST_ASSERT_TRUE(loadConfig());
+  TEST_ASSERT_EQUAL_STRING("http://10.0.0.8:8411", SERVER_URL.c_str());
+}
+
+void test_the_config_portal_value_is_never_overwritten_by_discovery() {
+  resetPortalState();
+  server.posted = {{"ssid", "net"}, {"password", "pw"}, {"updateIntervalMins", "20"},
+                   {"timeZone", "Europe/Berlin CET-1CEST"}, {"ntpServers", "pool.ntp.org"},
+                   {"serverUrl", "http://odelly.local:8411"}};
+  handleSave();  // someone types an address into the portal
+
+  MDNS.reset();
+  MDNS.answers = {{IPAddress(192, 168, 1, 9), 8411}};
+  TEST_ASSERT_FALSE(saveDiscoveredServerUrl(discoverServer()));
+
+  // Not only in RAM -- "permanently": across wakes, and across later unrelated saves.
+  for (int wake = 0; wake < 3; wake++) {
+    resetUserSettings();
+    TEST_ASSERT_TRUE(loadConfig());
+    TEST_ASSERT_EQUAL_STRING("http://odelly.local:8411", SERVER_URL.c_str());
+    TEST_ASSERT_EQUAL_STRING("manual", SERVER_URL_SOURCE.c_str());
+    TEST_ASSERT_FALSE(saveDiscoveredServerUrl("http://192.168.1.9:8411"));
+    saveDeviceRegistration("id", "secret");  // an unrelated saveConfig() must not demote it either
+  }
+  MDNS.reset();
+}
+
+void test_a_url_stored_before_the_source_key_existed_counts_as_manual() {
+  resetPortalState();
+  storeConfig("SERVER_URL=http://odelly.local:8411\r\n");  // written by Task 2's portal: only a person did that
+  TEST_ASSERT_TRUE(loadConfig());
+  TEST_ASSERT_EQUAL_STRING("manual", SERVER_URL_SOURCE.c_str());
+  TEST_ASSERT_FALSE(saveDiscoveredServerUrl("http://192.168.1.9:8411"));
+}
+
+void test_resaving_the_portal_does_not_turn_a_discovered_url_into_a_manual_one() {
+  resetPortalState();
+  storeConfig("SERVER_URL=http://192.168.1.9:8411\r\nSERVER_URL_SOURCE=discovered\r\n");
+  TEST_ASSERT_TRUE(loadConfig());
+  // the form is pre-filled with the discovered URL; changing only the WiFi password re-posts it unchanged
+  server.posted = {{"ssid", "net"}, {"password", "other"}, {"updateIntervalMins", "20"},
+                   {"timeZone", "Europe/Berlin CET-1CEST"}, {"ntpServers", "pool.ntp.org"},
+                   {"serverUrl", "http://192.168.1.9:8411"}};
+  handleSave();
+  resetUserSettings();
+  TEST_ASSERT_TRUE(loadConfig());
+  TEST_ASSERT_EQUAL_STRING("discovered", SERVER_URL_SOURCE.c_str());
+}
+
+void test_blanking_the_portal_field_returns_to_the_default_and_to_discoverable() {
+  resetPortalState();
+  storeConfig("SERVER_URL=http://odelly.local:8411\r\nSERVER_URL_SOURCE=manual\r\n");
+  TEST_ASSERT_TRUE(loadConfig());
+  server.posted = {{"ssid", "net"}, {"password", "pw"}, {"updateIntervalMins", "20"},
+                   {"timeZone", "Europe/Berlin CET-1CEST"}, {"ntpServers", "pool.ntp.org"},
+                   {"serverUrl", ""}};
+  handleSave();
+  resetUserSettings();
+  TEST_ASSERT_TRUE(loadConfig());
+  TEST_ASSERT_EQUAL_STRING("", SERVER_URL_SOURCE.c_str());
+  TEST_ASSERT_TRUE(saveDiscoveredServerUrl("http://192.168.1.9:8411"));  // the owner gave up control
+}
+
 void run_settings_tests() {
   UnitySetTestFile(__FILE__);  // so failures name this file, not the one that owns main()
   RUN_TEST(test_stored_server_url_overrides_the_compiled_default);
@@ -103,4 +196,10 @@ void run_settings_tests() {
   RUN_TEST(test_a_url_saved_from_the_form_survives_a_reload);
   RUN_TEST(test_saving_the_default_does_not_pin_it_as_a_stored_value);
   RUN_TEST(test_the_portal_form_offers_the_server_url_field);
+  RUN_TEST(test_a_discovered_url_is_persisted_for_next_wake);
+  RUN_TEST(test_a_discovered_url_may_be_replaced_by_a_later_discovery);
+  RUN_TEST(test_the_config_portal_value_is_never_overwritten_by_discovery);
+  RUN_TEST(test_a_url_stored_before_the_source_key_existed_counts_as_manual);
+  RUN_TEST(test_resaving_the_portal_does_not_turn_a_discovered_url_into_a_manual_one);
+  RUN_TEST(test_blanking_the_portal_field_returns_to_the_default_and_to_discoverable);
 }

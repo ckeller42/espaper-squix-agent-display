@@ -226,6 +226,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 // FORK CHANGE: SERVER_URL was a compile-time const. It is now a setting; the compiled-in value above
 // is only the default for a device with no stored one (configportal.h loadConfig()).
 static String SERVER_URL = SERVER_URL_DEFAULT;
+// FORK CHANGE (Task 4): who set SERVER_URL. "" = nobody (the compiled default is in use),
+// "manual" = a person typed it into the config portal, "discovered" = found by mDNS (discovery.h).
+// Discovery may replace "" and "discovered", never "manual".
+#define SERVER_URL_SOURCE_MANUAL "manual"
+#define SERVER_URL_SOURCE_DISCOVERED "discovered"
+static String SERVER_URL_SOURCE = "";
 
 /***************************
  * Functions
@@ -244,6 +250,7 @@ static void resetUserSettings() {
   DEVICE_ID = "";
   DEVICE_SECRET = "";
   SERVER_URL = SERVER_URL_DEFAULT;
+  SERVER_URL_SOURCE = "";
 }
 
 #endif //SETTINGS_H

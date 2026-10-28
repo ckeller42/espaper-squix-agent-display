@@ -12,7 +12,10 @@
 #include <atomic>
 #include <thread>
 
+#include <ESP8266mDNS.h>  // the host shim: a scripted answer list, see shims/ESP8266mDNS.h
+
 #include "../../EspaperClient/EspaperParser.h"
+#include "../../EspaperClient/discovery.h"
 #include "../../EspaperClient/serverTrust.h"
 
 static MiniGrafx gfx2;
@@ -70,23 +73,31 @@ static std::string httpResponse(const char *status, size_t bodyBytes) {
          "\r\nConnection: close\r\n\r\n" + std::string(bodyBytes, 'x');
 }
 
-// What setup() does with a stored URL: fetch the screen once, judge that same fetch.
+// What setup() does with a stored URL: fetch the screen once, judge that same fetch. The discovery
+// hook is the REAL discoverServer() over the (empty unless a test fills it) mDNS shim.
 struct Attempt {
   ScreenFetch result;
-  int rejections;
+  int rejections;  // times the discovery hook ran
   int connects;
+  int mdnsQueries;  // mDNS is UDP: WiFiClient::connectCount cannot see it, so it is counted at the shim
 };
 
-static Attempt fetchScreenFrom(const String &baseUrl, const String &deviceId, const String &secret) {
+static Attempt fetchScreenFrom(const String &baseUrl, const String &deviceId, const String &secret,
+                               bool urlIsManual = false) {
   Attempt a{};
   DEVICE_FS.files.clear();
   gfx2.calls.clear();
   EspaperParser p(&gfx2, "", baseUrl, secret, "host-1");
   int before = WiFiClient::connectCount;
-  a.result = fetchScreenJudged(
+  int queriesBefore = MDNS.queryCount;
+  a.result = fetchScreenOrDiscover(
       [&] { return p.getAndDrawScreen("/public/devices/" + deviceId + "/screen", "", [] {}); },
-      [&] { a.rejections++; });  // the seam Task 4 fills with discovery
+      urlIsManual,
+      [&] { a.rejections++; return discoverServer(); },
+      [&](const String &url) { p.setBaseUrl(url); },
+      [&](const String &) { return true; });
   a.connects = WiFiClient::connectCount - before;
+  a.mdnsQueries = MDNS.queryCount - queriesBefore;
   return a;
 }
 
@@ -100,6 +111,9 @@ void test_a_valid_stored_url_is_used_without_discovery() {
   TEST_ASSERT_TRUE(a.result.trusted);
   TEST_ASSERT_EQUAL(200, a.result.response.httpCode);
   TEST_ASSERT_EQUAL_INT(0, a.rejections);  // discovery never ran
+  // Discovery is UDP, so the connect count below cannot see it. Without this line an unconditional
+  // discovery query would leave this test green: the guard has to watch the mDNS shim too.
+  TEST_ASSERT_EQUAL_INT(0, a.mdnsQueries);
   // The steady state is free: exactly one connection, the screen fetch itself. An added validation
   // probe (HEAD, /health, a second GET) would make this 2 and fail here.
   TEST_ASSERT_EQUAL_INT(1, a.connects);
@@ -137,9 +151,133 @@ void test_a_stored_url_serving_a_non_espaper_response_is_rejected() {
   }
 }
 
+// ---- Task 4: discovery ---------------------------------------------------------------------------
+
+static const IPAddress IP_9(192, 168, 1, 9), IP_50(192, 168, 1, 50), IP_8(10, 0, 0, 8);
+
+void test_discovery_returns_empty_when_nothing_answers() {
+  MDNS.reset();
+  TEST_ASSERT_EQUAL_STRING("", discoverServer().c_str());
+  TEST_ASSERT_EQUAL_INT_MESSAGE(1, MDNS.queryCount, "it must actually have asked");
+  TEST_ASSERT_FALSE_MESSAGE(MDNS.responderRunning, "the responder's socket and buffers must be released");
+}
+
+void test_discovery_returns_the_one_server_that_answers() {
+  MDNS.reset();
+  MDNS.answers = {{IP_9, 8411}};
+  TEST_ASSERT_EQUAL_STRING("http://192.168.1.9:8411", discoverServer().c_str());
+}
+
+void test_discovery_picks_deterministically_when_two_servers_answer() {
+  // The rule (discovery.cpp): lowest IPv4 address, octet-wise numeric; then lowest port.
+  // .9 vs .50 is chosen because text order ("...50" < "...9") would pick the wrong one.
+  MDNS.reset();
+  MDNS.answers = {{IP_50, 8411}, {IP_9, 8411}};
+  TEST_ASSERT_EQUAL_STRING("http://192.168.1.9:8411", discoverServer().c_str());
+  MDNS.answers = {{IP_9, 8411}, {IP_50, 8411}};  // same set, other arrival order
+  TEST_ASSERT_EQUAL_STRING("http://192.168.1.9:8411", discoverServer().c_str());
+
+  MDNS.answers = {{IP_9, 8411}, {IP_8, 9000}, {IP_50, 80}};  // lowest address wins whatever the port
+  TEST_ASSERT_EQUAL_STRING("http://10.0.0.8:9000", discoverServer().c_str());
+
+  MDNS.answers = {{IP_9, 9000}, {IP_9, 8411}};  // one address on two ports: lower port
+  TEST_ASSERT_EQUAL_STRING("http://192.168.1.9:8411", discoverServer().c_str());
+}
+
+void test_discovery_ignores_an_answer_without_an_address() {
+  MDNS.reset();
+  MDNS.answers = {{IPAddress(), 8411}, {IP_50, 8411}};
+  TEST_ASSERT_EQUAL_STRING("http://192.168.1.50:8411", discoverServer().c_str());
+  MDNS.answers = {{IPAddress(), 8411}};
+  TEST_ASSERT_EQUAL_STRING("", discoverServer().c_str());
+}
+
+// A rejected stored URL (a 404 from "nginx on a reused address") with a live server elsewhere.
+void test_a_rejected_stored_url_is_replaced_by_the_discovered_server_and_adopted_once_it_works() {
+  EspaperParser reg(&gfx2, "", String(liveUrl.c_str()), "", "host-1");
+  auto id = reg.registerDevice("/public/devices",
+      "{\"macAddress\":\"AA:BB:CC:DD:EE:FF\",\"deviceType\":\"Espaper29Bw\",\"timeZone\":\"Europe/Berlin\"}");
+  Impostor nginx(httpResponse("404 Not Found", 162));
+
+  DEVICE_FS.files.clear();
+  EspaperParser p(&gfx2, "", nginx.url(), id.deviceSecret, "host-1");
+  std::vector<std::string> adopted;
+  DiscoveryOutcome outcome;
+  ScreenFetch r = fetchScreenOrDiscover(
+      [&] { return p.getAndDrawScreen("/public/devices/" + id.deviceId + "/screen", "", [] {}); },
+      false, [&] { return String(liveUrl.c_str()); },
+      [&](const String &url) { p.setBaseUrl(url); },
+      [&](const String &url) { adopted.push_back(url.c_str()); return true; }, &outcome);
+
+  TEST_ASSERT_TRUE(r.trusted);
+  TEST_ASSERT_EQUAL(200, r.response.httpCode);
+  TEST_ASSERT_TRUE(outcome.discoveryRan);
+  TEST_ASSERT_EQUAL_UINT(1, adopted.size());
+  TEST_ASSERT_EQUAL_STRING(liveUrl.c_str(), adopted[0].c_str());
+}
+
+void test_a_discovered_server_that_does_not_serve_a_screen_is_not_adopted() {
+  Impostor nginx(httpResponse("404 Not Found", 162));
+  Impostor otherPrinter(httpResponse("200 OK", 1500));
+  int adoptions = 0;
+  DiscoveryOutcome outcome;
+  EspaperParser p(&gfx2, "", nginx.url(), "", "host-1");
+  ScreenFetch r = fetchScreenOrDiscover(
+      [&] { return p.getAndDrawScreen("/public/devices/x/screen", "", [] {}); },
+      false, [&] { return otherPrinter.url(); },
+      [&](const String &url) { p.setBaseUrl(url); },
+      [&](const String &) { adoptions++; return true; }, &outcome);
+
+  TEST_ASSERT_FALSE(r.trusted);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(0, adoptions, "a wrong answer must not be persisted for the next wake");
+  TEST_ASSERT_TRUE(outcome.discoveryRan);
+  TEST_ASSERT_EQUAL_STRING(otherPrinter.url().c_str(), outcome.found.c_str());
+}
+
+void test_a_manual_stored_url_is_never_replaced_and_discovery_does_not_even_run() {
+  MDNS.reset();
+  MDNS.answers = {{IP_9, 8411}};  // a server IS available; it must still be left alone
+  Impostor nginx(httpResponse("404 Not Found", 162));
+  Attempt a = fetchScreenFrom(nginx.url(), "x", "", /*urlIsManual=*/true);
+  TEST_ASSERT_FALSE(a.result.trusted);
+  TEST_ASSERT_EQUAL_INT(0, a.rejections);
+  TEST_ASSERT_EQUAL_INT(0, a.mdnsQueries);
+  MDNS.reset();
+}
+
+void test_the_failure_message_names_what_was_tried() {
+  DiscoveryOutcome none;
+  none.discoveryRan = true;
+  String m = describeServerFailure("http://192.168.1.5:8411", false, none);
+  TEST_ASSERT_NOT_EQUAL(-1, m.indexOf('8'));
+  TEST_ASSERT_TRUE(std::string(m.c_str()).find("http://192.168.1.5:8411") != std::string::npos);
+  TEST_ASSERT_TRUE(std::string(m.c_str()).find("_espaper._tcp") != std::string::npos);
+  TEST_ASSERT_TRUE(std::string(m.c_str()).find("nothing") != std::string::npos);
+
+  DiscoveryOutcome skipped;
+  String manual = describeServerFailure("http://10.9.9.9:8411", true, skipped);
+  TEST_ASSERT_TRUE(std::string(manual.c_str()).find("hand") != std::string::npos);
+  TEST_ASSERT_TRUE(std::string(manual.c_str()).find("Not searching") != std::string::npos);
+
+  DiscoveryOutcome wrong;
+  wrong.discoveryRan = true;
+  wrong.found = "http://192.168.1.9:8411";
+  String w = describeServerFailure("http://192.168.1.5:8411", false, wrong);
+  TEST_ASSERT_TRUE(std::string(w.c_str()).find("http://192.168.1.9:8411") != std::string::npos);
+}
+
 void run_discovery_tests(const std::string &liveServerUrl) {
   UnitySetTestFile(__FILE__);
   liveUrl = liveServerUrl;
+  MDNS.reset();
   RUN_TEST(test_a_valid_stored_url_is_used_without_discovery);
   RUN_TEST(test_a_stored_url_serving_a_non_espaper_response_is_rejected);
+  RUN_TEST(test_discovery_returns_empty_when_nothing_answers);
+  RUN_TEST(test_discovery_returns_the_one_server_that_answers);
+  RUN_TEST(test_discovery_picks_deterministically_when_two_servers_answer);
+  RUN_TEST(test_discovery_ignores_an_answer_without_an_address);
+  RUN_TEST(test_a_rejected_stored_url_is_replaced_by_the_discovered_server_and_adopted_once_it_works);
+  RUN_TEST(test_a_discovered_server_that_does_not_serve_a_screen_is_not_adopted);
+  RUN_TEST(test_a_manual_stored_url_is_never_replaced_and_discovery_does_not_even_run);
+  RUN_TEST(test_the_failure_message_names_what_was_tried);
 }

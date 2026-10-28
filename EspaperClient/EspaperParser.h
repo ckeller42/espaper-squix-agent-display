@@ -66,6 +66,10 @@ class EspaperParser {
     DeviceIdAndSecret registerDevice(String requestPath, String jsonData);
   
     ResourceResponse getAndDrawScreen(String requestPath, String optionalHeaderFields, HandlerFunction downloadCompletedFunction);
+
+    // FORK CHANGE (Task 4): baseUrl was fixed at construction. Discovery finds a new server after the
+    // parser exists, so the next request must be able to go there.
+    void setBaseUrl(String baseUrl) { this->baseUrl = baseUrl; }
     
   private:
     MiniGrafx *gfx;

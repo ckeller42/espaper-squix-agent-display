@@ -40,6 +40,7 @@
 #include "configportal.h"
 #include "EspaperParser.h"
 #include "serverTrust.h"
+#include "discovery.h"
 
 #define MINI_BLACK 0
 #define MINI_WHITE 1
@@ -87,6 +88,18 @@ void showMessage(String message) {
   gfx.setTextAlignment(TEXT_ALIGN_CENTER);
   gfx.setFont(ArialMT_Plain_16);
   gfx.drawStringMaxWidth(gfx.getWidth() / 2, STD_MESSAGE_Y_POSITION, gfx.getWidth() * MAX_TEXT_WIDTH_FACTOR, message);
+  gfx.commit();
+  gfx.freeBuffer();
+}
+
+// FORK ADDITION: a longer, smaller-print message than showMessage(), for the server-unreachable screen.
+void showMessageSmall(String message) {
+  gfx.init();
+  gfx.fillBuffer(1);
+  gfx.setColor(MINI_BLACK);
+  gfx.setTextAlignment(TEXT_ALIGN_LEFT);
+  gfx.setFont(ArialMT_Plain_10);
+  gfx.drawStringMaxWidth(4, 4, gfx.getWidth() - 8, message);
   gfx.commit();
   gfx.freeBuffer();
 }
@@ -180,8 +193,12 @@ void startDeviceSleep(uint32_t sleepSeconds, uint32_t sleepUntilEpoch) {
 EspaperParser::ResourceResponse fetchAndDrawScreen(EspaperParser *parser, DeviceData *deviceData) {
   EspaperParser::ResourceResponse response;
   // FORK CHANGE: the one screen fetch doubles as the check that SERVER_URL is an ESPaper server
-  // (see serverTrust.h). No extra request; the callback below runs only if the URL is rejected.
-  fetchScreenJudged([&]() {
+  // (see serverTrust.h). No extra request in the steady state; discovery (discovery.h) runs only if
+  // the stored URL is rejected, and never replaces a URL that was entered by hand.
+  DiscoveryOutcome outcome;
+  bool urlIsManual = (SERVER_URL_SOURCE == SERVER_URL_SOURCE_MANUAL);
+  String storedUrl = SERVER_URL;
+  ScreenFetch fetched = fetchScreenOrDiscover([&]() {
     response = parser->getAndDrawScreen(SERVER_API_DEVICES_PATH + "/" + DEVICE_ID + "/screen", buildOptionalHeaderFields(deviceData), &BoardClass::sleepWifi);
     // 410 and update requests are the server speaking: handled (and restarted on) before any judgement.
     if (response.httpCode == 410) {
@@ -195,10 +212,24 @@ EspaperParser::ResourceResponse fetchAndDrawScreen(EspaperParser *parser, Device
       ESP.restart();
     }
     return response;
-  }, []() {
-    Serial.printf_P(PSTR("Stored server URL %s did not serve an ESPaper screen\n"), SERVER_URL.c_str());
-    // TASK 4 HOOK: discoverServer(), persist the result, and fetch again from the new URL.
-  });
+  }, urlIsManual, []() {
+    Serial.printf_P(PSTR("Stored server URL %s did not serve an ESPaper screen; searching\n"), SERVER_URL.c_str());
+    // getAndDrawScreen() switched the radio off when its download finished; mDNS needs it back.
+    if (!Board.connectWifi(WIFI_SSID, WIFI_PASS)) {
+      return String("");
+    }
+    return discoverServer();
+  }, [parser](const String &url) {
+    parser->setBaseUrl(url);
+  }, [](const String &url) {
+    // Only reached for a URL that has just served a screen. Writes flash, so not in the steady state.
+    return saveDiscoveredServerUrl(url);
+  }, &outcome);
+  if (!fetched.trusted) {
+    // Both the stored URL and discovery failed (or the stored URL is hand-entered and left alone).
+    // Say so on the panel: a blank or stale panel looks exactly like a flat battery.
+    showMessageSmall(describeServerFailure(storedUrl, urlIsManual, outcome));
+  }
   deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPDATE_SCREEN;
   return response;
 }

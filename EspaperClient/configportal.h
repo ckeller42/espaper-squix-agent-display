@@ -147,10 +147,27 @@ boolean saveConfig() {
   if (!(SERVER_URL == SERVER_URL_DEFAULT)) {
     f.print("SERVER_URL=");
     f.println(SERVER_URL);
+    f.print("SERVER_URL_SOURCE=");
+    // A stored URL with no recorded source can only have been put there by a person.
+    f.println(SERVER_URL_SOURCE == SERVER_URL_SOURCE_DISCOVERED ? SERVER_URL_SOURCE_DISCOVERED : SERVER_URL_SOURCE_MANUAL);
   }
   f.close();
   Serial.println("Saved values");
   return true;
+}
+
+// FORK ADDITION (Task 4): persist a URL found by discovery, so the next wake starts there and does
+// not search again. Refuses, and changes nothing, if the stored URL was entered by hand: a person who
+// typed an address is exercising control (usually while debugging) and must not be silently overridden.
+// Call it only for a URL that has just served a screen (serverTrust.h).
+boolean saveDiscoveredServerUrl(String url) {
+  if (SERVER_URL_SOURCE == SERVER_URL_SOURCE_MANUAL) {
+    Serial.println(F("Not storing the discovered server: the stored URL was entered by hand"));
+    return false;
+  }
+  SERVER_URL = url;
+  SERVER_URL_SOURCE = (url == SERVER_URL_DEFAULT) ? "" : SERVER_URL_SOURCE_DISCOVERED;
+  return saveConfig();
 }
 
 boolean loadConfig() {
@@ -159,6 +176,8 @@ boolean loadConfig() {
     Serial.println("Failed to open config file");
     return false;
   }
+  boolean urlStored = false;
+  String storedSource = "";
   while (f.available()) {
     String key = f.readStringUntil('=');
     String value = f.readStringUntil('\r');
@@ -187,12 +206,24 @@ boolean loadConfig() {
     }
     if (key == "SERVER_URL" && value != "") { // empty keeps the compiled-in default
       SERVER_URL = value;
+      urlStored = true;
+    }
+    if (key == "SERVER_URL_SOURCE") {
+      storedSource = value;
     }
     // break infinite loop if file is present but somehow empty or corrupt
     if (key == "" && value == "") {
       Serial.println(F("Config file available on the flash filesystem but at least one line with empty key and value found. Exiting read loop."));
       break;
     }
+  }
+  // FORK CHANGE (Task 4): only an explicit "discovered" lets discovery replace a stored URL again. A
+  // URL with a missing or unrecognised source is treated as hand-entered: Task 2's portal wrote
+  // those, and guessing "discovered" would let discovery override a person.
+  if (urlStored) {
+    SERVER_URL_SOURCE = (storedSource == SERVER_URL_SOURCE_DISCOVERED) ? SERVER_URL_SOURCE_DISCOVERED : SERVER_URL_SOURCE_MANUAL;
+  } else {
+    SERVER_URL_SOURCE = ""; // no stored URL: the compiled default, which discovery may replace
   }
   if (WIFI_SSID == "" || WIFI_PASS == "" || TIMEZONE == "") {
     Serial.println("At least one configuration property not yet defined");
@@ -380,10 +411,21 @@ void handleSave() {
   UPDATE_INTERVAL_MINS = server.arg("updateIntervalMins").toInt();
   TIMEZONE = server.arg("timeZone");
   NTP_SERVERS = server.arg("ntpServers");
-  SERVER_URL = server.arg("serverUrl");
-  if (SERVER_URL == "") {
-    SERVER_URL = SERVER_URL_DEFAULT; // a blanked field means "use the default", never "no server"
+  String submittedUrl = server.arg("serverUrl");
+  if (submittedUrl == "") {
+    submittedUrl = SERVER_URL_DEFAULT; // a blanked field means "use the default", never "no server"
   }
+  // FORK CHANGE (Task 4): the form is pre-filled with the current URL, so saving e.g. a new WiFi
+  // password re-posts a discovered URL unchanged. That is not a person choosing it: keep its source.
+  // Anything else typed here is a person exercising control, and from then on discovery leaves it alone.
+  if (submittedUrl == SERVER_URL && SERVER_URL_SOURCE == SERVER_URL_SOURCE_DISCOVERED) {
+    // unchanged discovered URL: source stays "discovered"
+  } else if (submittedUrl == SERVER_URL_DEFAULT) {
+    SERVER_URL_SOURCE = "";
+  } else {
+    SERVER_URL_SOURCE = SERVER_URL_SOURCE_MANUAL;
+  }
+  SERVER_URL = submittedUrl;
   Serial.println(WIFI_SSID);
   Serial.println(WIFI_PASS);
   Serial.println(UPDATE_INTERVAL_MINS);

@@ -22,7 +22,6 @@ static inline bool isEspaperScreenResponse(const EspaperParser::ResourceResponse
 }
 
 // Runs the one fetch and judges it. onStoredUrlRejected runs only on rejection.
-// TASK 4 HOOK: pass discovery here (find a server, persist it, fetch again).
 static inline ScreenFetch fetchScreenJudged(std::function<EspaperParser::ResourceResponse()> fetch,
                                             std::function<void()> onStoredUrlRejected) {
   ScreenFetch result;
@@ -32,6 +31,57 @@ static inline ScreenFetch fetchScreenJudged(std::function<EspaperParser::Resourc
     onStoredUrlRejected();
   }
   return result;
+}
+
+// ---- Task 4: discovery as the exception path -------------------------------------------------------
+
+// What the exception path did, for the failure screen.
+typedef struct DiscoveryOutcome {
+  bool discoveryRan = false;
+  String found; // what discovery returned; "" if nothing, or if it did not run
+} DiscoveryOutcome;
+
+// fetchScreenJudged plus the exception path. In the steady state this is exactly one fetch and none of
+// the callbacks run. Only when the stored URL is rejected:
+//   - urlIsManual: the URL was hand-entered, so it is never replaced -- discovery does not even run;
+//   - otherwise discover() is asked for a server; if it names one, retarget() points the fetcher
+//     there, the screen is fetched once more, and adopt() persists the URL ONLY if that fetch is
+//     judged trustworthy. A wrong answer is therefore never remembered for the next wake.
+static inline ScreenFetch fetchScreenOrDiscover(std::function<EspaperParser::ResourceResponse()> fetch,
+                                                bool urlIsManual,
+                                                std::function<String()> discover,
+                                                std::function<void(const String &)> retarget,
+                                                std::function<bool(const String &)> adopt,
+                                                DiscoveryOutcome *outcome = nullptr) {
+  DiscoveryOutcome local;
+  if (outcome == nullptr) outcome = &local;
+  bool rejected = false;
+  ScreenFetch result = fetchScreenJudged(fetch, [&]() { rejected = true; });
+  if (!rejected || urlIsManual) return result;
+
+  outcome->discoveryRan = true;
+  outcome->found = discover();
+  if (outcome->found == "") return result;
+
+  retarget(outcome->found);
+  ScreenFetch second = fetchScreenJudged(fetch, []() {});
+  if (second.trusted) adopt(outcome->found);
+  return second;
+}
+
+// The text for the panel when the stored URL was rejected and discovery did not rescue it. A blank
+// panel looks like a flat battery; this says what was tried. The caller draws it.
+static inline String describeServerFailure(const String &storedUrl, bool urlIsManual, const DiscoveryOutcome &outcome) {
+  String m = String("Cannot reach the ESPaper server.\nTried: ") + storedUrl;
+  if (urlIsManual) {
+    m += " (entered by hand)\nNot searching: a hand-entered address is never replaced. Change it in the config portal.";
+  } else if (outcome.found != "") {
+    m += "\nSearched _espaper._tcp and found " + outcome.found + ", but it did not serve a screen.";
+  } else {
+    m += "\nSearched _espaper._tcp on this network: nothing found.";
+  }
+  m += "\nRetrying in 1 min.";
+  return m;
 }
 
 #endif // SERVER_TRUST_H
