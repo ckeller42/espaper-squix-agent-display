@@ -86,27 +86,23 @@ main() {
     local port
     port="${SQUIX_PORT:-$(select_port)}"
 
-    echo
-    echo "==> Put the ESPaper into flash mode now:"
-    echo "      hold S0  ->  tap RST  ->  release RST  ->  release S0"
-    # Only wait for a human when there IS one. Without this guard the read
-    # hits EOF under `set -e` (agent, CI, piped stdin) and kills the script.
-    # Once the ESP is in the bootloader it stays there until the next reset,
-    # so a non-interactive run is fine if you pressed the buttons first.
-    if [[ -t 0 ]]; then
-        read -r -p "    press Enter when done "
-    else
-        echo "    (non-interactive: assuming the device is already in flash mode)"
-    fi
+    echo "==> flashing (auto-reset into bootloader; no buttons needed)"
+    echo "    if this fails: switch the device on, check the programmer's 5V"
+    echo "    pin alignment, then hold S0 / tap RST / release RST / release S0"
 
-    # no_reset on both ends: the ESPaper's programmer header carries power and
-    # the two UART lines only -- DTR/RTS are not wired to GPIO0/RST, which is
-    # exactly why flash mode is the manual S0+RST dance above. Letting esptool
-    # attempt an auto-reset just adds a confusing failure mode.
+    # VERIFIED on real hardware: DTR/RTS ARE wired to GPIO0/RST on this
+    # programmer, so esptool enters the bootloader by itself -- matching
+    # upstream's "upload_resetmethod = nodemcu". The manual S0+RST dance from
+    # the ThingPulse guide is a fallback, not a requirement.
+    # --after hard-reset so the device boots the firmware we just wrote.
+    #
+    # flash-size 2MB matches board_build.ldscript (eagle.flash.2m512.ld), NOT
+    # the chip's physical size -- this unit reports 4MB. The header and the
+    # linker script must agree or the filesystem lands at the wrong offset.
     #
     # dout (not qio) matches board_build.flash_mode in platformio.ini.
     esptool --chip esp8266 --port "$port" --baud "$BAUD" \
-        --before no-reset --after no-reset \
+        --before default-reset --after hard-reset \
         write-flash --flash-mode dout --flash-size 2MB 0x0 "$FIRMWARE"
 
     if [[ $do_monitor -eq 1 ]]; then
