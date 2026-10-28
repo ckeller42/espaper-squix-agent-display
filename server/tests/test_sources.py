@@ -166,8 +166,18 @@ def _quote_with_result(result):
         _quote_with_result([{"meta": None}]),
         _quote_with_result([{"meta": "not-a-dict"}]),
         _quote_with_meta(chartPreviousClose="n/a"),
+        _quote_with_result(5),
+        _quote_with_result(True),
     ],
-    ids=["result0-null", "result0-str", "meta-null", "meta-str", "previous-close-non-numeric"],
+    ids=[
+        "result0-null",
+        "result0-str",
+        "meta-null",
+        "meta-str",
+        "previous-close-non-numeric",
+        "result-numeric",
+        "result-bool",
+    ],
 )
 def test_quote_parse_raises_value_error_on_malformed_structure(payload):
     with pytest.raises(ValueError):

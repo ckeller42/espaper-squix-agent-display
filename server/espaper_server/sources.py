@@ -104,6 +104,8 @@ class QuoteSource:
                 f"Yahoo returned no result for {self.symbol}: "
                 f"{error.get('code', 'unknown')}: {error.get('description', 'no description')}"
             )
+        if not isinstance(chart["result"], list):
+            raise ValueError(f"Yahoo payload for {self.symbol} has a non-list result")
         first = chart["result"][0]
         meta = first.get("meta") if isinstance(first, dict) else None
         if not isinstance(meta, dict):
