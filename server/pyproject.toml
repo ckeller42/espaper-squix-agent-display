@@ -2,7 +2,7 @@
 name = "espaper-server"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["fastapi", "uvicorn", "pillow", "httpx"]
+dependencies = ["fastapi", "uvicorn", "pillow", "httpx", "tzdata"]
 
 [dependency-groups]
 dev = ["pytest"]
