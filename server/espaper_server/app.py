@@ -1,5 +1,7 @@
 """The device protocol. The server serves bytes; it never draws while a device waits."""
 
+import asyncio
+import contextlib
 import html
 import io
 import os
@@ -10,6 +12,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from espaper_server.advertise import Advertiser, advertiser_from_env
 from espaper_server.packer import pack_screen, unpack_screen
 from espaper_server.recipe import Panel, Recipe
 from espaper_server.render import render, render_ascii
@@ -40,8 +43,21 @@ class Registration(BaseModel):
     timeZone: str = Field(min_length=1)
 
 
-def create_app(store: Store) -> FastAPI:
-    app = FastAPI()
+def create_app(store: Store, advertiser: Advertiser | None = None) -> FastAPI:
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        # Advertising is optional and never fatal: Advertiser logs its own failures. It runs in a
+        # thread because registering probes the network for a second or more.
+        adv = advertiser or advertiser_from_env()
+        if adv is not None:
+            await asyncio.to_thread(adv.start)
+        try:
+            yield
+        finally:
+            if adv is not None:
+                await asyncio.to_thread(adv.stop)
+
+    app = FastAPI(lifespan=lifespan)
     app.state.store = store
     waiting = build_waiting_payload(store._clock())
 

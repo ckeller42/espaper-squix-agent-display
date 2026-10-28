@@ -25,6 +25,36 @@ ESPAPER_DATA_DIR=/var/lib/espaper uv run uvicorn espaper_server.app:app --host 1
 - The screen changes only when a recipe is approved. Nothing re-fetches data on
   a schedule, so a deployed screen ages until someone approves again.
 
+## Discovery (mDNS)
+
+Optional. When enabled, the server advertises itself so a device that cannot reach its stored
+URL can find it (the firmware queries `_espaper._tcp`). Off by default.
+
+```bash
+ESPAPER_ADVERTISE_PORT=8411 uv run uvicorn espaper_server.app:app --host 192.168.178.43 --port 8411
+```
+
+- `ESPAPER_ADVERTISE_PORT` enables it and **must equal the port uvicorn listens on**; the server
+  cannot read that itself. Invalid values disable it with an error in the log.
+- `ESPAPER_ADVERTISE_ADDRESS` (optional) pins the IPv4 address announced. Without it the address of
+  the default-route interface is used; set it on a host with several interfaces or a VPN.
+- Advertised: service `_espaper._tcp.local.`, instance `ESPaper display server`, host
+  `espaper-server.local.`, the configured port, one A record. No TXT record: the firmware reads
+  only the address and port.
+- It uses `python-zeroconf` (pure Python, works on Linux and macOS, coexists with Avahi and
+  mDNSResponder). If zeroconf is missing or registering fails (no multicast, name already taken),
+  the server logs it and serves normally.
+- The firmware keeps a hand-entered server URL over a discovered one, and picks the lowest IPv4
+  address if several servers answer.
+
+Confirm from another machine on the same LAN:
+
+```bash
+avahi-browse -rt _espaper._tcp     # Linux
+dns-sd -B _espaper._tcp            # macOS: browse, then
+dns-sd -L "ESPaper display server" _espaper._tcp local   # shows host and port
+```
+
 ## Look at it
 
 - `/preview` HTML page showing the screen, with the recipe state
