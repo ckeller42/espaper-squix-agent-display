@@ -173,13 +173,9 @@ const String SERVER_API_DEVICES_PATH = "/public/devices";
   // use empty array as a placeholder, as the scheme is HTTP rather
   // than HTTPS it won't actually be used, see EspaperParser::createWifiClient
   static const char rootCaCert[] PROGMEM = {};
-  // PROVISIONAL. This is a DHCP address on the development Mac, not a
-  // deployment value: spec decision 1 puts the server on odelly, and decision
-  // 13 has the device DISCOVER its server precisely so a compiled-in address
-  // cannot strand it. Neither is implemented yet (both belong to the firmware
-  // plan). A wrong address here costs an error screen, a 60 s retry loop and a
-  // physical reflash to correct, so CHECK THIS BEFORE FLASHING.
-  const String SERVER_URL = "http://192.168.178.43:8411";
+  // Default for a device with no stored SERVER_URL; a value saved in the config
+  // portal (or written by discovery) overrides it. Not a deployment address.
+  const String SERVER_URL_DEFAULT = "http://192.168.178.43:8411";
   #define USE_SECURE_WIFI_CLIENT 0
 #else
   #define USE_SECURE_WIFI_CLIENT 1
@@ -218,14 +214,18 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )EOF";
     #ifdef TEST_ENV
-      const String SERVER_URL = "https://test.espaper.com";
+      const String SERVER_URL_DEFAULT = "https://test.espaper.com";
 
     #else
       // PROD
-      const String SERVER_URL = "https://www.espaper.com";
+      const String SERVER_URL_DEFAULT = "https://www.espaper.com";
     #endif
 
 #endif
+
+// FORK CHANGE: SERVER_URL was a compile-time const. It is now a setting; the compiled-in value above
+// is only the default for a device with no stored one (configportal.h loadConfig()).
+static String SERVER_URL = SERVER_URL_DEFAULT;
 
 /***************************
  * Functions
@@ -243,6 +243,7 @@ static void resetUserSettings() {
   NTP_SERVERS = "0.pool.ntp.org,1.pool.ntp.org,2.pool.ntp.org";
   DEVICE_ID = "";
   DEVICE_SECRET = "";
+  SERVER_URL = SERVER_URL_DEFAULT;
 }
 
 #endif //SETTINGS_H

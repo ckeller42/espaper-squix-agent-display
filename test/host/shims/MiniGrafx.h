@@ -23,6 +23,8 @@ class MiniGrafx {
   void drawStringMaxWidth(int, int, int, const String &msg) {
     calls.push_back(std::string("drawStringMaxWidth:") + msg.c_str());
   }
+  void drawPalettedBitmapFromPgm(int, int, const char *) {}
+  void drawString(int, int, const String &) {}
   void commit() { calls.push_back("commit"); }
   void freeBuffer() {}
 };

@@ -167,6 +167,8 @@ void test_unreachable_server_is_reported_as_minus_two() {
   TEST_ASSERT_EQUAL_UINT32(60, r.sleepSeconds);
 }
 
+void run_settings_tests();  // test_settings.cpp
+
 int main() {
   startServer();
   UNITY_BEGIN();
@@ -179,6 +181,7 @@ int main() {
   RUN_TEST(test_sleep_headers_are_parsed);
   RUN_TEST(test_unknown_device_gets_410_and_an_error_screen_not_a_payload);
   RUN_TEST(test_unreachable_server_is_reported_as_minus_two);
+  run_settings_tests();
   int failed = UNITY_END();
   stopServer();
   return failed;

@@ -22,6 +22,11 @@
 
 #define PROGMEM
 #define PSTR(s) (s)
+#define FPSTR(s) (String(s))
+#define pgm_read_byte(p) (*(const uint8_t *)(p))
+#define INPUT 0
+inline void pinMode(int, int) {}
+inline void yield() {}
 #define F(s) (s)
 typedef bool boolean;
 
@@ -65,6 +70,17 @@ class String {
   void toUpperCase() { for (auto &c : s_) c = (char)toupper((unsigned char)c); }
   bool startsWith(const String &p) const { return s_.compare(0, p.s_.size(), p.s_) == 0; }
   bool equals(const String &o) const { return s_ == o.s_; }
+  // Used by configportal.h (the config portal is compiled on the host, see test_settings.cpp).
+  String(double v) : s_(std::to_string(v)) {}
+  char charAt(unsigned int i) const { return i < s_.size() ? s_[i] : 0; }
+  int indexOf(const String &t, unsigned int from = 0) const {
+    size_t p = s_.find(t.s_, from);
+    return p == std::string::npos ? -1 : (int)p;
+  }
+  void replace(const String &from, const String &to) {
+    if (from.s_.empty()) return;
+    for (size_t p = 0; (p = s_.find(from.s_, p)) != std::string::npos; p += to.s_.size()) s_.replace(p, from.s_.size(), to.s_);
+  }
 
   String &operator+=(const String &o) { s_ += o.s_; return *this; }
   friend String operator+(const String &a, const String &b) { return String(a.s_ + b.s_); }
@@ -114,11 +130,19 @@ inline HostSerial Serial;
 struct HostEsp {
   uint32_t getFreeHeap() { return 30000; }
   uint32_t getFreeSketchSpace() { return 1000000; }
+  uint32_t getFlashChipSize() { return 4 * 1024 * 1024; }
+  void restart() {}
 };
 inline HostEsp ESP;
 
+struct HostIp { String toString() const { return "192.168.4.1"; } };
+enum { WIFI_AP = 2 };
 struct HostWiFi {
   int RSSI() { return -60; }
+  String macAddress() { return "AA:BB:CC:DD:EE:FF"; }
+  void mode(int) {}
+  void softAP(const char *) {}
+  HostIp softAPIP() { return HostIp(); }
 };
 inline HostWiFi WiFi;
 
@@ -127,8 +151,11 @@ inline HostWiFi WiFi;
 class File {
  public:
   File() : files_(nullptr) {}
-  File(std::map<std::string, std::string> *files, const std::string &name) : files_(files), name_(name) {
-    (*files_)[name_].clear();
+  // Like the real FS, only a "w"/"a" open creates or truncates; "r" on a missing file fails.
+  File(std::map<std::string, std::string> *files, const std::string &name, const char *mode)
+      : files_(files), name_(name) {
+    if (mode[0] == 'w') (*files_)[name_].clear();
+    else if (files_->find(name_) == files_->end()) files_ = nullptr;
   }
   explicit operator bool() const { return files_ != nullptr; }
   size_t write(const uint8_t *buf, size_t n) {
@@ -136,15 +163,32 @@ class File {
     return n;
   }
   void close() {}
+  // Used by configportal.h's saveConfig()/loadConfig().
+  void print(const String &v) { write((const uint8_t *)v.c_str(), v.length()); }
+  void println(const String &v) { print(v); print("\r\n"); }  // the ESP8266 core's println ends lines with CRLF
+  void println(int v) { println(String(v)); }
+  bool available() { return files_ && pos_ < (*files_)[name_].size(); }
+  int read() { return available() ? (unsigned char)(*files_)[name_][pos_++] : -1; }
+  String readStringUntil(char term) {
+    std::string out;
+    while (available()) {
+      char c = (*files_)[name_][pos_++];
+      if (c == term) break;
+      out += c;
+    }
+    return String(out);
+  }
 
  private:
   std::map<std::string, std::string> *files_;
   std::string name_;
+  size_t pos_ = 0;
 };
 
 struct HostFs {
   std::map<std::string, std::string> files;
-  File open(const String &name, const char *) { return File(&files, name.c_str()); }
+  File open(const String &name, const char *mode) { return File(&files, name.c_str(), mode); }
+  bool remove(const String &name) { return files.erase(name.c_str()) > 0; }
 };
 inline HostFs DEVICE_FS;
 

@@ -24,7 +24,9 @@
 #ifndef CONFIG_PORTAL_H
 #define CONFIG_PORTAL_H
 
-#if defined(ESP8266) 
+// ESPAPER_HOST_TEST: the native test build compiles this header against a recording stand-in for the
+// web server (test/host/shims/ESP8266WebServer.h). Not defined on any device build.
+#if defined(ESP8266) || defined(ESPAPER_HOST_TEST)
  #include <ESP8266WebServer.h>
 #elif defined(ESP32)
   #include <WebServer.h>
@@ -101,7 +103,7 @@ typedef struct DeviceData {
 } DeviceData;
 
 
-#if defined(ESP8266) 
+#if defined(ESP8266) || defined(ESPAPER_HOST_TEST)
   ESP8266WebServer server (80);
 #elif defined(ESP32)
   WebServer server (80);
@@ -140,6 +142,12 @@ boolean saveConfig() {
   f.println(DEVICE_ID);
   f.print("DEVICE_SECRET=");
   f.println(DEVICE_SECRET);
+  // Only a value that differs from the compiled-in default is stored: saving the form must not freeze
+  // today's default into flash, and a stored SERVER_URL then always means "set on purpose".
+  if (!(SERVER_URL == SERVER_URL_DEFAULT)) {
+    f.print("SERVER_URL=");
+    f.println(SERVER_URL);
+  }
   f.close();
   Serial.println("Saved values");
   return true;
@@ -176,6 +184,9 @@ boolean loadConfig() {
     }
     if (key == "DEVICE_SECRET" || key == "DEVICE_KEY") { // support pre-V011 clients
       DEVICE_SECRET = value;
+    }
+    if (key == "SERVER_URL" && value != "") { // empty keeps the compiled-in default
+      SERVER_URL = value;
     }
     // break infinite loop if file is present but somehow empty or corrupt
     if (key == "" && value == "") {
@@ -337,6 +348,7 @@ void handleRoot() {
   server.sendContent("</select>");
   server.sendContent("<br><br>");
   server.sendContent(getFormField("ntpServers", "NTP Servers", "300", NTP_SERVERS, ""));
+  server.sendContent(getFormField("serverUrl", "ESPaper Server URL", "200", SERVER_URL, ""));
   server.sendContent(FPSTR(HTTP_FORM_END));
   server.sendContent(FPSTR(HTTP_END));
   server.sendContent("");
@@ -368,11 +380,16 @@ void handleSave() {
   UPDATE_INTERVAL_MINS = server.arg("updateIntervalMins").toInt();
   TIMEZONE = server.arg("timeZone");
   NTP_SERVERS = server.arg("ntpServers");
+  SERVER_URL = server.arg("serverUrl");
+  if (SERVER_URL == "") {
+    SERVER_URL = SERVER_URL_DEFAULT; // a blanked field means "use the default", never "no server"
+  }
   Serial.println(WIFI_SSID);
   Serial.println(WIFI_PASS);
   Serial.println(UPDATE_INTERVAL_MINS);
   Serial.println(TIMEZONE);
   Serial.println(NTP_SERVERS);
+  Serial.println(SERVER_URL);
   saveConfig();
   sendRedirectToRoot();
 }
