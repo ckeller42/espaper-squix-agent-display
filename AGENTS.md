@@ -40,6 +40,11 @@ device renders screens pushed by an agent via a server on the LAN.
 - Free heap after init: ~45.9 KB. That is the real budget for new features.
 
 ## Gotchas
+- **`gh` resolves to `upstream` on this repo.** With the ThingPulse remote present,
+  `gh workflow run` / `gh run list` target *their* repo and fail confusingly
+  (`404: workflow ci.yml not found on the default branch`). `gh repo set-default
+  ckeller42/espaper-squix-agent-display` is already set in this clone; re-run it
+  in a fresh clone.
 - **Warnings are fixed, not tolerated** — CI fails the build if any appear.
   `-Werror` is deliberately not used (it would also fail on framework headers);
   the gate greps the build output we own.
