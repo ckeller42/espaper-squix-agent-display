@@ -74,7 +74,7 @@ routed to the firmware plan.
 
 - `EspaperParser.cpp:118` and `:334`: `if (!client->available() == 0)`, an
   inverted check (`!x == 0` is `x != 0`, written as if it meant `x == 0`).
-- `EspaperParser.cpp:378`: `printf` with `%d` given a `long` (`downloadedBytes`). Harmless on the 32-bit ESP8266, where `long` is `int`, but wrong on a 64-bit host and flagged by `-Wformat`.
+- `EspaperParser.cpp:378`: `printf` with `%d` given a `long` (`downloadedBytes`). Harmless on the 32-bit ESP8266, where `long` is `int`, but a format mismatch on a 64-bit host.
 - `EspaperParser.cpp:427`: an **enum passed to `%s`**, in the `default:` arm of
   the OTA switch. On the device this dereferences a small integer as a
   pointer. It only fires on an unexpected OTA return value, which is why it has
