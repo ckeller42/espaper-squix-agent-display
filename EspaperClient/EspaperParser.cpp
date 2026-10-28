@@ -136,6 +136,17 @@ EspaperParser::ResourceResponse EspaperParser::getAndDrawScreen(String requestPa
     return response;
   }
 
+  // FORK CHANGE: judge the fetch we already made instead of probing. A 200 that is not exactly one
+  // payload came from some other device (e.g. a reused DHCP address). Return before the framebuffer
+  // is allocated, like the update case above, rather than draw another device's bytes as a screen.
+  if (response.httpCode == 200 && response.payloadBytes != ESPAPER_PAYLOAD_SIZE) {
+    Serial.printf("Server sent %u bytes, a screen is %d: not an ESPaper server\n", (unsigned) response.payloadBytes, ESPAPER_PAYLOAD_SIZE);
+    response.httpCode = HTTP_INTERNAL_CODE_NOT_ESPAPER;
+    response.sleepSeconds = 60;
+    response.sleepUntilEpoch = 60;
+    return response;
+  }
+
   gfx->init();
   gfx->fillBuffer(1);
 
@@ -254,6 +265,7 @@ EspaperParser::ResourceResponse EspaperParser::downloadResource(Url url, String 
   response.httpCode = 0;
   response.sleepSeconds = 0;
   response.sleepUntilEpoch = 0;
+  response.payloadBytes = 0;
 
   Serial.printf(PSTR("Downloading resource from:\n\tScheme: %s\n\tHost: %s\n\tPort: %d\n\tPath: %s\n"), url.protocol.c_str(), url.host.c_str(), url.port, url.path.c_str());
 
@@ -377,6 +389,7 @@ EspaperParser::ResourceResponse EspaperParser::downloadResource(Url url, String 
       file.close();
       client->stop();
       delete client;
+      response.payloadBytes = downloadedBytes;
       // Local fix: downloadedBytes is a long, so %ld (%d is a width mismatch off the 32-bit device).
       Serial.printf("Downloaded file %s with size %ld", fileName.c_str(), downloadedBytes);
       Serial.println();

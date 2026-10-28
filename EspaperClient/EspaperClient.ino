@@ -39,6 +39,7 @@
 #endif
 #include "configportal.h"
 #include "EspaperParser.h"
+#include "serverTrust.h"
 
 #define MINI_BLACK 0
 #define MINI_WHITE 1
@@ -177,19 +178,28 @@ void startDeviceSleep(uint32_t sleepSeconds, uint32_t sleepUntilEpoch) {
 }
 
 EspaperParser::ResourceResponse fetchAndDrawScreen(EspaperParser *parser, DeviceData *deviceData) {
-  EspaperParser::ResourceResponse response = parser->getAndDrawScreen(SERVER_API_DEVICES_PATH + "/" + DEVICE_ID + "/screen", buildOptionalHeaderFields(deviceData), &BoardClass::sleepWifi);
-  if (response.httpCode == 410) {
-    saveDeviceRegistration("", "");
-    ESP.restart();
-  }
-  if (response.httpCode == HTTP_INTERNAL_CODE_UPGRADE_CLIENT) {
-    Serial.println(F("Firmware upgrade requested by server"));
-    deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPGRADE_FIRMWARE;
-    saveDeviceData(deviceData);
-    ESP.restart();
-  } else {
-    deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPDATE_SCREEN;
-  }
+  EspaperParser::ResourceResponse response;
+  // FORK CHANGE: the one screen fetch doubles as the check that SERVER_URL is an ESPaper server
+  // (see serverTrust.h). No extra request; the callback below runs only if the URL is rejected.
+  fetchScreenJudged([&]() {
+    response = parser->getAndDrawScreen(SERVER_API_DEVICES_PATH + "/" + DEVICE_ID + "/screen", buildOptionalHeaderFields(deviceData), &BoardClass::sleepWifi);
+    // 410 and update requests are the server speaking: handled (and restarted on) before any judgement.
+    if (response.httpCode == 410) {
+      saveDeviceRegistration("", "");
+      ESP.restart();
+    }
+    if (response.httpCode == HTTP_INTERNAL_CODE_UPGRADE_CLIENT) {
+      Serial.println(F("Firmware upgrade requested by server"));
+      deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPGRADE_FIRMWARE;
+      saveDeviceData(deviceData);
+      ESP.restart();
+    }
+    return response;
+  }, []() {
+    Serial.printf_P(PSTR("Stored server URL %s did not serve an ESPaper screen\n"), SERVER_URL.c_str());
+    // TASK 4 HOOK: discoverServer(), persist the result, and fetch again from the new URL.
+  });
+  deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPDATE_SCREEN;
   return response;
 }
 

@@ -37,6 +37,11 @@
 //#include <rom/rtc.h>
 
 #define HTTP_INTERNAL_CODE_UPGRADE_CLIENT -5
+// FORK CHANGE: a 200 whose body is not a screen payload; something other than an ESPaper server answered.
+#define HTTP_INTERNAL_CODE_NOT_ESPAPER -6
+// FORK CHANGE: size in bytes of one screen payload (6-byte header + 37 bytes/row * 128 rows), the
+// same constant as PAYLOAD_SIZE in server/espaper_server/packer.py. Both ends must change together.
+#define ESPAPER_PAYLOAD_SIZE 4742
 
 class EspaperParser {
   public:
@@ -51,6 +56,7 @@ class EspaperParser {
       int httpCode;
       uint32_t sleepSeconds;
       uint32_t sleepUntilEpoch;
+      uint32_t payloadBytes; // FORK CHANGE: body bytes received on a 200, 0 otherwise
     } ResourceResponse;
   
     EspaperParser(MiniGrafx *gfx, const char *rootCertificate, String baseUrl, String deviceSecret, String clientVersion);

@@ -198,7 +198,12 @@ class WiFiClient {
  public:
   virtual ~WiFiClient() { stop(); }
 
+  // Test instrumentation, not Arduino API: counts connection attempts so a test can prove how many
+  // requests a code path makes.
+  static inline int connectCount = 0;
+
   int connect(const char *host, uint16_t port) {
+    connectCount++;
     stop();
     struct addrinfo hints = {}, *res = nullptr;
     hints.ai_family = AF_UNSPEC;

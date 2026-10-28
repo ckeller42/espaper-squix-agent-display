@@ -168,6 +168,7 @@ void test_unreachable_server_is_reported_as_minus_two() {
 }
 
 void run_settings_tests();  // test_settings.cpp
+void run_discovery_tests(const std::string &liveUrl);  // test_discovery.cpp
 
 int main() {
   startServer();
@@ -182,6 +183,7 @@ int main() {
   RUN_TEST(test_unknown_device_gets_410_and_an_error_screen_not_a_payload);
   RUN_TEST(test_unreachable_server_is_reported_as_minus_two);
   run_settings_tests();
+  run_discovery_tests(serverUrl().c_str());
   int failed = UNITY_END();
   stopServer();
   return failed;
