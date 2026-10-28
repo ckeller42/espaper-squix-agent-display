@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+import pytest
 
 from espaper_server.sources import (
     QuoteSource,
@@ -106,8 +107,41 @@ TRANSPORT_AND_PARSE_ERRORS = [
     httpx.ReadTimeout("timed out"),
     httpx.ConnectError("unreachable"),
     KeyError("chart"),
-    TypeError("'NoneType' object is not subscriptable"),  # Yahoo error shape
 ]
+
+
+# Deliberately synthetic: Yahoo's documented error shape, hand-written (not captured).
+YAHOO_ERROR_FIXTURE = {
+    "chart": {
+        "result": None,
+        "error": {"code": "Not Found", "description": "No data found, symbol may be delisted"},
+    }
+}
+
+
+def test_quote_parse_raises_value_error_on_yahoo_error_shape():
+    with pytest.raises(ValueError, match="Not Found.*delisted"):
+        QuoteSource("NVDA")._parse(YAHOO_ERROR_FIXTURE)
+
+
+def test_quote_parse_raises_value_error_on_missing_or_empty_result():
+    for chart in ({}, {"result": []}, {"result": None, "error": None}):
+        with pytest.raises(ValueError):
+            QuoteSource("NVDA")._parse({"chart": chart})
+
+
+def test_yahoo_error_shape_falls_back_to_previous_reading():
+    class ErrorShapeQuote(QuoteSource):
+        def fetch(self) -> Reading:
+            return self._parse(YAHOO_ERROR_FIXTURE)
+
+    reading, is_stale = fetch_with_fallback(ErrorShapeQuote("NVDA"), previous=OLD_READING)
+    assert reading == OLD_READING and is_stale is True
+
+
+def test_a_type_error_is_a_bug_and_is_not_swallowed():
+    with pytest.raises(TypeError):
+        fetch_with_fallback(FailingSource(TypeError("bug")), previous=OLD_READING)
 
 
 def test_timeout_falls_back_to_previous_reading():

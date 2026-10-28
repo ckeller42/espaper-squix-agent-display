@@ -95,7 +95,14 @@ class QuoteSource:
         return self._parse(response.json())
 
     def _parse(self, payload: dict[str, Any]) -> Reading:
-        meta = payload["chart"]["result"][0]["meta"]
+        chart = payload["chart"]
+        if not chart.get("result"):
+            error = chart.get("error") or {}
+            raise ValueError(
+                f"Yahoo returned no result for {self.symbol}: "
+                f"{error.get('code', 'unknown')}: {error.get('description', 'no description')}"
+            )
+        meta = chart["result"][0]["meta"]
         currency = meta["currency"]
         price = meta["regularMarketPrice"]
         extra: dict[str, str] = {}
@@ -116,9 +123,8 @@ class QuoteSource:
 # Failures that mean "the source is unreachable or answered with something we can't read".
 # httpx.HTTPError covers timeouts, connection errors and non-2xx (raise_for_status);
 # ValueError covers invalid JSON and timestamps; KeyError/IndexError cover a changed API
-# shape; TypeError is here because Yahoo's error shape (`chart.result: null`) makes
-# QuoteSource._parse raise it. Anything else is a bug and must propagate.
-FETCH_ERRORS = (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError)
+# shape. Anything else (TypeError included) is a bug and must propagate.
+FETCH_ERRORS = (httpx.HTTPError, ValueError, KeyError, IndexError)
 
 # observed_at for "never fetched": the epoch, so age_of reports decades rather than a
 # plausible-looking recent age.
