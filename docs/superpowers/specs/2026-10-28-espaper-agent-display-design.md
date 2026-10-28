@@ -203,11 +203,18 @@ Three facts, all verified against the firmware rather than assumed:
 
 - **`EspaperParser::dissectUrl` already accepts hostnames**, not only IPs. It
   splits host and port and hands the host to the WiFi client, which resolves it
-  by DNS. A hostname URL therefore needs no parser work. One caveat: it locates
-  the path with `indexOf('/')`, so a URL with no path at all would produce an
-  empty host. In practice `SERVER_URL` is always concatenated with a path
-  before being dissected, so this is latent, not live — but do not remove that
-  concatenation.
+  by DNS. A hostname URL therefore needs no parser work.
+
+  **Correction (verified 2026-10-28 by the native host build, Task 9).** An
+  earlier draft of this document claimed a URL with no path yields an *empty
+  host*. That was wrong, and the error was mine. Arduino's `String::substring`
+  takes **unsigned** arguments, so `substring(0, -1)` from a failed `indexOf`
+  wraps, clamps, and means "to the end" — host and port parse correctly. Only
+  the **path** comes out empty. The empty-host behaviour was an artifact of a
+  test shim that clamped negatives to zero, not of the firmware. `SERVER_URL`
+  should still always be concatenated with a path before dissection, because an
+  empty path produces a malformed request line — but the failure mode is an
+  empty path, not an empty host.
 - **`ESP8266mDNS` ships in the Arduino core**, so DNS-SD is available without a
   hand-rolled UDP protocol.
 - **The config portal already persists arbitrary key/value pairs** to
