@@ -1,14 +1,18 @@
 """The device protocol. The server serves bytes; it never draws while a device waits."""
 
+import html
+import io
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from espaper_server.packer import pack_screen
+from espaper_server.packer import pack_screen, unpack_screen
 from espaper_server.recipe import Panel, Recipe
-from espaper_server.render import render
+from espaper_server.render import render, render_ascii
 from espaper_server.sources import Reading
 from espaper_server.store import Store
 
@@ -63,6 +67,43 @@ def create_app(store: Store) -> FastAPI:
                 "X-ESPAPER-SLEEP-SECONDS": str(seconds),
                 "X-ESPAPER-SLEEP-UNTIL": str(int(store._clock().timestamp()) + seconds),
             },
+        )
+
+    def served_screen():
+        """The image the panel would show, unpacked from the very bytes devices are sent."""
+        return unpack_screen(store.current_payload() or waiting)
+
+    @app.get("/preview.png")
+    def preview_png() -> Response:
+        buffer = io.BytesIO()
+        served_screen().save(buffer, format="PNG")
+        return Response(content=buffer.getvalue(), media_type="image/png")
+
+    @app.get("/preview.txt")
+    def preview_txt() -> PlainTextResponse:
+        return PlainTextResponse(render_ascii(served_screen()) + "\n")
+
+    @app.get("/preview")
+    def preview() -> HTMLResponse:
+        recipe, rendered_at = store.pending_recipe(), store.rendered_at()
+        if recipe is None:
+            state = "No recipe proposed yet. Devices are shown the waiting screen."
+        elif store.is_approved():
+            state = "Recipe approved: devices show this screen."
+        else:
+            state = "Recipe awaiting approval: devices still show the screen below, not the proposal."
+        if rendered_at is None:
+            when = "Nothing rendered yet."
+        else:
+            local = rendered_at.astimezone(ZoneInfo(recipe.timezone if recipe else "UTC"))
+            when = f"Rendered {local:%Y-%m-%d %H:%M %Z}."
+        return HTMLResponse(
+            "<!doctype html><meta charset=utf-8><title>ESPaper preview</title>"
+            "<style>img{image-rendering:pixelated;display:block;margin:.5em 0;border:1px solid #888}</style>"
+            f"<h1>ESPaper preview</h1><p>{html.escape(state)} {html.escape(when)}</p>"
+            '<img src="/preview.png" width=296 height=128 alt="screen at panel size">'
+            '<img src="/preview.png" width=888 height=384 alt="screen enlarged">'
+            '<p><a href="/preview.txt">Text version</a></p>'
         )
 
     return app

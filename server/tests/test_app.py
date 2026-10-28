@@ -1,11 +1,15 @@
+from io import BytesIO
+
 import pytest
+from PIL import Image
 from fastapi.testclient import TestClient
 
 import espaper_server.app as app_module
 from espaper_server.app import create_app
-from espaper_server.packer import PAYLOAD_SIZE
+from espaper_server.packer import PAYLOAD_SIZE, pack_screen
 from espaper_server.store import Store
-from tests.recipes import FIXED_NOW
+from tests.recipes import FIXED_NOW, READINGS, RECIPE
+from tests.test_store import factory_for
 
 REGISTER = {"macAddress": "AA:BB", "deviceType": "Espaper29Bw", "timeZone": "Europe/Berlin"}
 
@@ -129,3 +133,61 @@ def test_a_corrupt_device_record_gets_410_so_the_device_reregisters(client, tmp_
     dev, auth = device
     (tmp_path / "devices" / f"{dev}.json").write_text("{truncated")
     assert client.get(f"/public/devices/{dev}/screen", headers=auth).status_code == 410
+
+
+@pytest.fixture
+def approved(tmp_path):
+    store = Store(tmp_path, source_factory=factory_for(*READINGS), clock=lambda: FIXED_NOW)
+    store.approve(RECIPE)
+    return store
+
+
+def test_preview_png_is_a_png_of_the_panel_size(client):
+    r = client.get("/preview.png")
+    assert r.headers["content-type"] == "image/png"
+    assert Image.open(BytesIO(r.content)).size == (296, 128)
+
+
+def test_preview_page_shows_when_it_was_rendered_and_the_approval_state(approved):
+    body = TestClient(create_app(approved)).get("/preview").text
+    assert "18:05 UTC" not in body and "19:05 CET" in body
+    assert "approved" in body and "awaiting approval" not in body
+
+
+def test_preview_page_says_awaiting_approval_for_a_proposed_recipe(approved):
+    approved.propose(RECIPE)
+    body = TestClient(create_app(approved)).get("/preview").text
+    assert "awaiting approval" in body
+
+
+def test_preview_page_before_any_recipe_says_so(client):
+    body = client.get("/preview").text
+    assert "no recipe" in body.lower()
+    assert client.get("/preview.png").status_code == 200
+
+
+def test_preview_page_embeds_the_image_and_links_the_text_view(approved):
+    body = TestClient(create_app(approved)).get("/preview").text
+    assert 'src="/preview.png"' in body and "/preview.txt" in body
+
+
+def test_preview_png_matches_the_payload_served_to_the_device(approved):
+    client = TestClient(create_app(approved))
+    r = client.post("/public/devices", json=REGISTER)
+    dev, auth = r.headers["X-ESPAPER-DEVICE-ID"], {"X-ESPAPER-SECRET": r.headers["X-ESPAPER-SECRET"]}
+    png = Image.open(BytesIO(client.get("/preview.png").content)).convert("1")
+    assert pack_screen(png) == client.get(f"/public/devices/{dev}/screen", headers=auth).content
+
+
+def test_preview_before_approval_shows_what_the_device_would_get(client, device):
+    dev, auth = device
+    png = Image.open(BytesIO(client.get("/preview.png").content)).convert("1")
+    assert pack_screen(png) == client.get(f"/public/devices/{dev}/screen", headers=auth).content
+
+
+def test_preview_txt_is_plain_text_art_of_the_served_screen(approved):
+    r = TestClient(create_app(approved)).get("/preview.txt")
+    assert r.headers["content-type"].startswith("text/plain")
+    lines = r.text.rstrip("\n").split("\n")
+    assert len(lines) == 16 and {len(line) for line in lines} == {74}
+    assert r.text.strip()  # the weather and quote panels leave ink

@@ -183,3 +183,20 @@ def render_png(
     buffer = io.BytesIO()
     render(recipe, readings, now, stale).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+ASCII_RAMP = " .:-=+*#%@"  # blank paper to solid ink
+
+
+def render_ascii(image: Image.Image, cols: int = 74) -> str:
+    """The screen as text for a terminal. Each character covers a block of pixels (twice as tall as
+    wide, as terminal cells are) and shows how much ink the block holds; paper is blank."""
+    block_width = image.width / cols
+    rows = round(image.height / (2 * block_width))
+    # BOX averages each block; ink is bit 0, so ink share = 1 - brightness.
+    brightness = image.convert("L").resize((cols, rows), Image.Resampling.BOX)
+    top = len(ASCII_RAMP) - 1
+    return "\n".join(
+        "".join(ASCII_RAMP[round((255 - brightness.getpixel((x, y))) / 255 * top)] for x in range(cols))
+        for y in range(rows)
+    )

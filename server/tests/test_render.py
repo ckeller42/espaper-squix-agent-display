@@ -196,3 +196,42 @@ def test_panel_boxes_split_the_width_by_weight_with_one_pixel_rules():
     assert boxes[0][0] == 0 and boxes[-1][1] == SCREEN_WIDTH
     assert boxes[1][0] == boxes[0][1] + 1
     assert boxes[0][1] == round((SCREEN_WIDTH - 1) * 0.63)
+
+
+def test_ascii_of_an_all_white_screen_is_blank_not_solid():
+    from espaper_server.render import render_ascii
+
+    art = render_ascii(Image.new("1", (SCREEN_WIDTH, SCREEN_HEIGHT), 1))
+    assert art.strip() == ""
+
+
+def test_ascii_of_an_all_black_screen_is_solid():
+    from espaper_server.render import render_ascii
+
+    art = render_ascii(Image.new("1", (SCREEN_WIDTH, SCREEN_HEIGHT), 0))
+    assert set(art.replace("\n", "")) == {"@"}
+
+
+def test_ascii_has_exact_width_and_sixteen_rows():
+    from espaper_server.render import render_ascii
+
+    lines = render_ascii(render(RECIPE, READINGS, FIXED_NOW)).split("\n")
+    assert len(lines) == 16
+    assert {len(line) for line in lines} == {74}
+
+
+def test_ascii_width_follows_cols():
+    from espaper_server.render import render_ascii
+
+    lines = render_ascii(render(RECIPE, READINGS, FIXED_NOW), cols=37).split("\n")
+    assert {len(line) for line in lines} == {37}
+
+
+def test_ascii_puts_ink_where_the_ink_is():
+    from espaper_server.render import render_ascii
+
+    image = Image.new("1", (SCREEN_WIDTH, SCREEN_HEIGHT), 1)
+    ImageDraw.Draw(image).rectangle([0, 0, 3, 7], fill=0)  # exactly the top-left character cell
+    lines = render_ascii(image).split("\n")
+    assert lines[0][0] == "@"
+    assert lines[0][1:].strip() == "" and all(not line.strip() for line in lines[1:])

@@ -7,6 +7,7 @@
     root/approved               marker file: present when recipe.json is approved
     root/readings.json          last good reading per source spec, the fallback when a source is down
     root/screen.bin             the payload served to devices
+    root/rendered_at            when screen.bin was stored (ISO time)
 
 The store holds bytes. approve() is the only place that composes a screen, and it runs when a
 person approves a recipe, never while a device is waiting for a response.
@@ -123,6 +124,11 @@ class Store:
         if len(data) != PAYLOAD_SIZE:
             raise ValueError(f"a screen payload is exactly {PAYLOAD_SIZE} bytes, got {len(data)}")
         self._write("screen.bin", data)
+        self._write("rendered_at", self._clock().isoformat())
+
+    def rendered_at(self) -> datetime | None:
+        path = self.root / "rendered_at"
+        return datetime.fromisoformat(path.read_text()) if path.exists() else None
 
     def propose(self, recipe: Recipe) -> None:
         """Park a recipe for preview. The screen devices see does not change until approve()."""
