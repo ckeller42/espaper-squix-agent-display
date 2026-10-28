@@ -19,23 +19,25 @@ jobs:
     name: Build firmware
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
       # Same detect-secrets hook developers run locally via scripts/gate.sh --
       # one config, two places, no separate CI-only scanner to drift.
       - name: Secret scan
-        uses: pre-commit/action@v3.0.1
+        run: |
+          pip install pre-commit==4.7.0
+          pre-commit run --all-files
 
       # The image is linux/amd64 and so is the runner, so this is a native
       # build -- no QEMU, unlike on an Apple Silicon dev machine.
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
@@ -75,7 +77,7 @@ jobs:
             pio run -e Espaper29Bw-PROD -t size
 
       - name: Upload firmware
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: espaper-firmware
           path: |
