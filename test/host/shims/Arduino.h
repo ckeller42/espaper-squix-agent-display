@@ -1,5 +1,5 @@
 // Host stand-in for the Arduino core, covering exactly what EspaperParser.cpp, Board.h and
-// settings.h touch. String and Serial are faithful in behaviour; WiFiClient is a REAL POSIX
+// settings.h touch. String and Serial follow the Arduino core's behaviour (incl. unsigned substring arguments); WiFiClient is a REAL POSIX
 // TCP socket, so the firmware's HTTP code talks to a real server. The ESP8266-only parts
 // (OTA updater, WiFi radio, heap) are inert stubs.
 #ifndef HOST_ARDUINO_H
@@ -50,14 +50,15 @@ class String {
     size_t p = s_.find(c, from);
     return p == std::string::npos ? -1 : (int)p;
   }
-  String substring(int left, int right) const {
-    if (left < 0) left = 0;
-    if (right < 0) right = 0;
-    if (right < left) std::swap(left, right);
-    if ((size_t)left >= s_.size()) return String();
+  // Unsigned arguments, exactly as in the Arduino core: a failed indexOf() (-1) becomes UINT_MAX and
+  // clamps to the end of the string. The firmware relies on this (EspaperParser.cpp:97, :101, :190).
+  String substring(unsigned int left, unsigned int right) const {
+    if (left > right) std::swap(left, right);
+    if (left >= s_.size()) return String();
+    if (right > s_.size()) right = (unsigned int)s_.size();
     return String(s_.substr(left, right - left));
   }
-  String substring(int left) const { return substring(left, (int)s_.size()); }
+  String substring(unsigned int left) const { return substring(left, (unsigned int)s_.size()); }
   void remove(unsigned int index) { if (index < s_.size()) s_.erase(index); }
   void remove(unsigned int index, unsigned int count) { if (index < s_.size()) s_.erase(index, count); }
   long toInt() const { return atol(s_.c_str()); }
@@ -90,6 +91,9 @@ struct HostSerial {
   // Deliberately NOT format-checked: the firmware targets 32-bit ints AND longs, so its "%d" with a
   // long is correct on the device and only mismatches on this 64-bit host. printf_P is the
   // flash-string twin of printf (PSTR is a plain pointer here).
+  // COST: turning format checking off also hides GENUINE mismatches, not just the long/int width one
+  // -- e.g. an enum passed to "%s" (EspaperParser.cpp:427) compiles silently here. Do not read a
+  // clean host build as proof the firmware's printf calls are right.
   void printf(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);

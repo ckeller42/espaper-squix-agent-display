@@ -99,6 +99,27 @@ void test_dissect_url_defaults_the_port_for_http() {
   TEST_ASSERT_EQUAL(80, u.port);
 }
 
+// The Arduino core's substring() takes UNSIGNED arguments, so a failed indexOf (-1) means "to the end".
+// The firmware relies on that at EspaperParser.cpp:97, :101 and :190; the shim must agree with the device.
+void test_substring_with_a_failed_index_runs_to_the_end() {
+  String s("abc\r");
+  TEST_ASSERT_EQUAL_STRING("abc\r", s.substring(0, -1).c_str());
+  TEST_ASSERT_EQUAL_STRING("c\r", s.substring(2, -1).c_str());
+  TEST_ASSERT_EQUAL_STRING("bc", s.substring(1, 3).c_str());
+  TEST_ASSERT_EQUAL_STRING("bc", s.substring(3, 1).c_str());  // swapped, as on the device
+  TEST_ASSERT_EQUAL_STRING("", s.substring(9, 12).c_str());
+}
+
+// Characterisation of the known dissectUrl latent bug, with the DEVICE's substring semantics:
+// no path means indexOf('/') == -1, which reads as "to the end", so the host survives and the path is empty.
+void test_dissect_url_without_a_path_keeps_the_host_and_has_an_empty_path() {
+  EspaperParser p = makeParser();
+  auto u = p.dissectUrl("http://odelly.fritz.box:8080");
+  TEST_ASSERT_EQUAL_STRING("odelly.fritz.box", u.host.c_str());
+  TEST_ASSERT_EQUAL(8080, u.port);
+  TEST_ASSERT_EQUAL_STRING("", u.path.c_str());
+}
+
 // ---- against the live server ---------------------------------------------------------------------
 
 void test_registration_parses_identity_from_headers() {
@@ -151,6 +172,8 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_dissect_url_accepts_a_hostname);
   RUN_TEST(test_dissect_url_defaults_the_port_for_http);
+  RUN_TEST(test_substring_with_a_failed_index_runs_to_the_end);
+  RUN_TEST(test_dissect_url_without_a_path_keeps_the_host_and_has_an_empty_path);
   RUN_TEST(test_registration_parses_identity_from_headers);
   RUN_TEST(test_screen_download_yields_the_exact_payload_size);
   RUN_TEST(test_sleep_headers_are_parsed);
