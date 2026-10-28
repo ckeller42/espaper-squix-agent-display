@@ -70,8 +70,13 @@ class EspaperParser {
     // FORK CHANGE (Task 4): baseUrl was fixed at construction. Discovery finds a new server after the
     // parser exists, so the next request must be able to go there.
     void setBaseUrl(String baseUrl) { this->baseUrl = baseUrl; }
+
+    // FORK CHANGE (double refresh): see getAndDrawScreen(). Only set by a caller that draws its own
+    // screen on every non-trusted result (fetchScreenOrDiscoverOrReport in serverTrust.h).
+    void setDeferFailureScreen(bool defer) { this->deferFailureScreen = defer; }
     
   private:
+    bool deferFailureScreen = false;
     MiniGrafx *gfx;
     uint8_t screenWidth;
     String baseUrl;

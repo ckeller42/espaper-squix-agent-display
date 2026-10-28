@@ -266,6 +266,102 @@ void test_the_failure_message_names_what_was_tried() {
   TEST_ASSERT_TRUE(std::string(w.c_str()).find("http://192.168.1.9:8411") != std::string::npos);
 }
 
+// ---- double refresh: a failed wake draws ONE screen ----------------------------------------------
+// The e-ink refresh is the device's biggest power cost and the panel has finite cycles, so the
+// refresh count is asserted at the MiniGrafx shim: every commit() is one physical refresh.
+
+static int commitsIn(const MiniGrafx &g) {
+  int n = 0;
+  for (auto &c : g.calls) if (c == "commit") n++;
+  return n;
+}
+
+struct Wake {
+  ScreenFetch result;
+  int failureScreens;
+};
+
+// setup()'s fetchAndDrawScreen(): the real parser, the real wrapper; showFailure is the sketch's
+// showMessageSmall (init, draw, commit) as far as the shim can see it.
+static Wake wakeAgainst(const String &baseUrl, const String &deviceId, const String &secret,
+                        bool urlIsManual = false, String discovered = "") {
+  Wake w{};
+  DEVICE_FS.files.clear();
+  gfx2.calls.clear();
+  EspaperParser p(&gfx2, "", baseUrl, secret, "host-1");
+  w.result = fetchScreenOrDiscoverOrReport(
+      &p, [&] { return p.getAndDrawScreen("/public/devices/" + deviceId + "/screen", "", [] {}); },
+      urlIsManual, [&] { return discovered; },
+      [&](const String &url) { p.setBaseUrl(url); },
+      [&](const String &) { return true; }, baseUrl,
+      [&](const String &message) {
+        w.failureScreens++;
+        gfx2.init();
+        gfx2.drawStringMaxWidth(4, 4, 288, message);
+        gfx2.commit();
+      });
+  return w;
+}
+
+void test_a_down_server_draws_exactly_one_screen() {
+  Wake w = wakeAgainst("http://127.0.0.1:1", "x", "");  // connection refused: httpCode -2
+  TEST_ASSERT_FALSE(w.result.trusted);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(1, commitsIn(gfx2), "one e-ink refresh per failed wake");
+  TEST_ASSERT_EQUAL_INT(1, w.failureScreens);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(60, w.result.response.sleepSeconds, "retry in 1 min still set");
+  TEST_ASSERT_EQUAL_UINT32(60, w.result.response.sleepUntilEpoch);
+}
+
+void test_every_rejection_kind_draws_exactly_one_screen_and_never_zero() {
+  Impostor nginx(httpResponse("404 Not Found", 162));
+  Impostor broken(httpResponse("500 Internal Server Error", 10));
+  Impostor printer(httpResponse("200 OK", 1500));  // wrong-size 200: parser already drew nothing
+  Impostor otherPrinter(httpResponse("200 OK", 1500));
+  struct Kind { const char *name; String url; bool manual; String discovered; };
+  Kind kinds[] = {
+      {"404", nginx.url(), false, ""},
+      {"500", broken.url(), false, ""},
+      {"wrong-size 200", printer.url(), false, ""},
+      {"manual URL", nginx.url(), true, ""},
+      {"discovery found a non-server", nginx.url(), false, otherPrinter.url()},
+  };
+  for (auto &k : kinds) {
+    wakeAgainst(k.url, "x", "", k.manual, k.discovered);  // clears the shim, so each count is its own
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, commitsIn(gfx2), k.name);
+  }
+}
+
+void test_a_failure_still_draws_something() {  // never zero: a blank panel looks like a flat battery
+  Wake w = wakeAgainst("http://127.0.0.1:1", "x", "");
+  TEST_ASSERT_GREATER_OR_EQUAL_INT(1, commitsIn(gfx2));
+  TEST_ASSERT_EQUAL_INT(1, w.failureScreens);
+  bool saidWhy = false;
+  for (auto &c : gfx2.calls) if (c.find("Cannot reach the ESPaper server") != std::string::npos) saidWhy = true;
+  TEST_ASSERT_TRUE_MESSAGE(saidWhy, "the one screen is the specific one");
+}
+
+void test_a_410_still_draws_its_own_screen_because_the_sketch_restarts_before_any_other() {
+  EspaperParser p(&gfx2, "", String(liveUrl.c_str()), "not-a-secret", "host-1");
+  DEVICE_FS.files.clear();
+  gfx2.calls.clear();
+  p.setDeferFailureScreen(true);
+  auto r = p.getAndDrawScreen("/public/devices/nobody/screen", "", [] {});
+  TEST_ASSERT_EQUAL(410, r.httpCode);
+  TEST_ASSERT_EQUAL_INT(1, commitsIn(gfx2));
+}
+
+void test_a_rescued_wake_draws_only_the_real_screen() {  // the first rejected fetch drew a wasted one
+  EspaperParser reg(&gfx2, "", String(liveUrl.c_str()), "", "host-1");
+  auto id = reg.registerDevice("/public/devices",
+      "{\"macAddress\":\"AA:BB:CC:DD:EE:FF\",\"deviceType\":\"Espaper29Bw\",\"timeZone\":\"Europe/Berlin\"}");
+  Impostor nginx(httpResponse("404 Not Found", 162));
+  Wake w = wakeAgainst(nginx.url(), id.deviceId, id.deviceSecret, false, String(liveUrl.c_str()));
+  TEST_ASSERT_TRUE(w.result.trusted);
+  TEST_ASSERT_EQUAL_INT(0, w.failureScreens);
+  TEST_ASSERT_EQUAL_INT(1, commitsIn(gfx2));
+  TEST_ASSERT_EQUAL_STRING("drawPalettedBitmapFromFile:/screen", gfx2.calls[1].c_str());
+}
+
 void run_discovery_tests(const std::string &liveServerUrl) {
   UnitySetTestFile(__FILE__);
   liveUrl = liveServerUrl;
@@ -280,4 +376,9 @@ void run_discovery_tests(const std::string &liveServerUrl) {
   RUN_TEST(test_a_discovered_server_that_does_not_serve_a_screen_is_not_adopted);
   RUN_TEST(test_a_manual_stored_url_is_never_replaced_and_discovery_does_not_even_run);
   RUN_TEST(test_the_failure_message_names_what_was_tried);
+  RUN_TEST(test_a_down_server_draws_exactly_one_screen);
+  RUN_TEST(test_every_rejection_kind_draws_exactly_one_screen_and_never_zero);
+  RUN_TEST(test_a_failure_still_draws_something);
+  RUN_TEST(test_a_410_still_draws_its_own_screen_because_the_sketch_restarts_before_any_other);
+  RUN_TEST(test_a_rescued_wake_draws_only_the_real_screen);
 }

@@ -84,4 +84,28 @@ static inline String describeServerFailure(const String &storedUrl, bool urlIsMa
   return m;
 }
 
+// FORK CHANGE (double refresh): fetchScreenOrDiscover plus the failure screen, in one place, so the
+// rule "every untrusted result ends in exactly one screen" lives in code the host tests compile.
+// showFailure draws the failure screen and is called exactly once whenever the result is not trusted.
+// This also tells the parser to skip its own generic error screen (see getAndDrawScreen).
+static inline ScreenFetch fetchScreenOrDiscoverOrReport(EspaperParser *parser,
+                                                        std::function<EspaperParser::ResourceResponse()> fetch,
+                                                        bool urlIsManual,
+                                                        std::function<String()> discover,
+                                                        std::function<void(const String &)> retarget,
+                                                        std::function<bool(const String &)> adopt,
+                                                        const String &storedUrl,
+                                                        std::function<void(const String &)> showFailure) {
+  DiscoveryOutcome outcome;
+  // The parser may skip its generic error screen only because the check below follows every
+  // untrusted result. It is switched back off afterwards so nothing else inherits the promise.
+  parser->setDeferFailureScreen(true);
+  ScreenFetch result = fetchScreenOrDiscover(fetch, urlIsManual, discover, retarget, adopt, &outcome);
+  parser->setDeferFailureScreen(false);
+  if (!result.trusted) {
+    showFailure(describeServerFailure(storedUrl, urlIsManual, outcome));
+  }
+  return result;
+}
+
 #endif // SERVER_TRUST_H

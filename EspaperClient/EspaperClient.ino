@@ -196,10 +196,9 @@ EspaperParser::ResourceResponse fetchAndDrawScreen(EspaperParser *parser, Device
   // FORK CHANGE: the one screen fetch doubles as the check that SERVER_URL is an ESPaper server
   // (see serverTrust.h). No extra request in the steady state; discovery (discovery.h) runs only if
   // the stored URL is rejected, and never replaces a URL that was entered by hand.
-  DiscoveryOutcome outcome;
   bool urlIsManual = (SERVER_URL_SOURCE == SERVER_URL_SOURCE_MANUAL);
   String storedUrl = SERVER_URL;
-  ScreenFetch fetched = fetchScreenOrDiscover([&]() {
+  ScreenFetch fetched = fetchScreenOrDiscoverOrReport(parser, [&]() {
     response = parser->getAndDrawScreen(SERVER_API_DEVICES_PATH + "/" + DEVICE_ID + "/screen", buildOptionalHeaderFields(deviceData), &BoardClass::sleepWifi);
     // 410 and update requests are the server speaking: handled (and restarted on) before any judgement.
     if (response.httpCode == 410) {
@@ -241,12 +240,12 @@ EspaperParser::ResourceResponse fetchAndDrawScreen(EspaperParser *parser, Device
   }, [](const String &url) {
     // Only reached for a URL that has just served a screen. Writes flash, so not in the steady state.
     return saveDiscoveredServerUrl(url);
-  }, &outcome);
-  if (!fetched.trusted) {
+  }, storedUrl, [](const String &message) {
     // Both the stored URL and discovery failed (or the stored URL is hand-entered and left alone).
-    // Say so on the panel: a blank or stale panel looks exactly like a flat battery.
-    showMessageSmall(describeServerFailure(storedUrl, urlIsManual, outcome));
-  }
+    // Say so on the panel: a blank or stale panel looks exactly like a flat battery. This is the ONLY
+    // screen a failed wake draws: the wrapper told the parser to skip its generic one.
+    showMessageSmall(message);
+  });
   deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPDATE_SCREEN;
   return response;
 }

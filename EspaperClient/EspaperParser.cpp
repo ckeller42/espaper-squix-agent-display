@@ -147,6 +147,18 @@ EspaperParser::ResourceResponse EspaperParser::getAndDrawScreen(String requestPa
     return response;
   }
 
+  // FORK CHANGE (double refresh): when the caller has promised its own failure screen, a fetch that
+  // failed (not 200, and not the 410 whose restart follows) must not spend an e-ink refresh on the
+  // generic message below -- it would be replaced at once, or never read at all. Return before the
+  // framebuffer is allocated. The 60 s retry is exactly what the -2 and default cases set below.
+  // Never defer without that promise: with no caller screen this path would draw nothing.
+  if (deferFailureScreen && response.httpCode != 200 && response.httpCode != 410) {
+    Serial.println(F("Fetch failed; the caller draws the failure screen"));
+    response.sleepSeconds = 60;
+    response.sleepUntilEpoch = 60;
+    return response;
+  }
+
   gfx->init();
   gfx->fillBuffer(1);
 
