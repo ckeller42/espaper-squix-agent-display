@@ -1,0 +1,13 @@
+# Weekly bumps for the two ecosystems this repo actually has. There is no pip
+# ecosystem here: it is C++/PlatformIO firmware. What Dependabot can usefully
+# track is the pinned Docker base image that carries the toolchain, and the
+# actions used by CI.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+
+  - package-ecosystem: docker
+    directory: /docker
+    schedule: { interval: weekly }

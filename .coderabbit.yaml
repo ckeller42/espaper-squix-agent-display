@@ -1,0 +1,18 @@
+# .coderabbit.yaml -- explicit config beats app defaults. App install is a MANUAL
+# browser step: https://github.com/apps/coderabbitai
+# Convention once enabled: no self-merge with unresolved review threads.
+language: en
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    # Vendored upstream library: we carry one deliberate local change
+    # (see lib/MiniGrafx/VENDORED.md); reviewing the other 8k lines is noise.
+    - "!lib/MiniGrafx/**"
+    - "!target/**"
+chat:
+  auto_reply: true

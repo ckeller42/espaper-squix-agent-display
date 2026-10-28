@@ -1,5 +1,15 @@
 # ThingPulse ESPaper client
 
+[![CI](https://github.com/ckeller42/espaper-squix-agent-display/actions/workflows/ci.yml/badge.svg)](https://github.com/ckeller42/espaper-squix-agent-display/actions/workflows/ci.yml)
+![Platform](https://img.shields.io/badge/platform-ESP8266-blue)
+![Framework](https://img.shields.io/badge/PlatformIO-Arduino%20core%203.1.2-orange)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+> **Fork of [ThingPulse/espaper-client](https://github.com/ThingPulse/espaper-client).**
+> Builds again with current tooling (PlatformIO 6, Arduino core 3.x), migrated
+> off deprecated SPIFFS, warning-free, and built in a container so it works on
+> Apple Silicon. See [AGENTS.md](AGENTS.md) for the workflow.
+
 How about *designing* your [ESPaper](https://thingpulse.com/product-category/espaper-epaper-kits/) content rather than programming it? You can fully customize the content to display. And load content from remote resources (calendars etc.). And much more. All with the help of [https://www.espaper.com](https://www.espaper.com).
 
 No Arduino programming required anymore!

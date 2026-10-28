@@ -21,6 +21,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Same detect-secrets hook developers run locally via scripts/gate.sh --
+      # one config, two places, no separate CI-only scanner to drift.
+      - name: Secret scan
+        uses: pre-commit/action@v3.0.1
+
       # The image is linux/amd64 and so is the runner, so this is a native
       # build -- no QEMU, unlike on an Apple Silicon dev machine.
       - uses: docker/setup-buildx-action@v3

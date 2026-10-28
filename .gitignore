@@ -15,3 +15,6 @@ firmware.map
 # Scratch git worktrees
 .worktrees/
 build.log
+
+# Local gate scratch output
+build.log

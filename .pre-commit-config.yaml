@@ -1,0 +1,9 @@
+repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0          # pin; Dependabot's ecosystems don't track pre-commit revs
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        # Vendored third-party source and build output: not ours to police, and
+        # the font/bitmap tables are high-entropy enough to trip the scanner.
+        exclude: ^(lib/MiniGrafx/|target/)
