@@ -72,7 +72,7 @@ dev = [
 requires-dist = [
     { name = "fastapi" },
     { name = "httpx2" },
-    { name = "pillow" },
+    { name = "pillow", specifier = ">=13" },
     { name = "tzdata" },
     { name = "uvicorn" },
 ]
