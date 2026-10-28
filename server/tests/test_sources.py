@@ -5,8 +5,8 @@ from pathlib import Path
 from espaper_server.sources import QuoteSource, Reading, WeatherSource
 
 FIXTURES = Path(__file__).parent / "fixtures"
-# Weather: real Open-Meteo capture. Quote: hand-written from the verified
-# field list (Yahoo rate-limited the capture attempt); same shape as the API.
+# Both fixtures are real captured API responses (Open-Meteo and Yahoo chart, 2026-10-28);
+# the minimal-meta quote test below is deliberately synthetic.
 WEATHER_FIXTURE = json.loads((FIXTURES / "open_meteo_forecast.json").read_text())
 QUOTE_FIXTURE = json.loads((FIXTURES / "yahoo_chart_nvda.json").read_text())
 
@@ -20,12 +20,12 @@ def test_weather_formats_value_with_unit():
 
 
 def test_quote_formats_value_with_currency_symbol():
-    assert QuoteSource("NVDA")._parse(QUOTE_FIXTURE).value == "$216.61"
+    assert QuoteSource("NVDA")._parse(QUOTE_FIXTURE).value == "$215.85"
 
 
 def test_observed_at_comes_from_the_provider_not_now():
     r = QuoteSource("NVDA")._parse(QUOTE_FIXTURE)
-    assert r.observed_at == datetime.fromtimestamp(1793211545, tz=timezone.utc)
+    assert r.observed_at == datetime.fromtimestamp(1793213773, tz=timezone.utc)
 
 
 def test_observed_at_is_timezone_aware():
@@ -50,7 +50,7 @@ def test_quote_extra_has_previous_close_and_change():
     r = QuoteSource("NVDA")._parse(QUOTE_FIXTURE)
     assert r.label == "NVDA"
     assert r.extra["previous_close"] == "$217.94"
-    assert r.extra["change"] == "-$1.33"
+    assert r.extra["change"] == "-$2.09"
     assert r.extra["exchange"] == "NasdaqGS"
 
 
