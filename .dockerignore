@@ -1,0 +1,6 @@
+.git
+.pio
+.github
+docker
+scripts
+*.md

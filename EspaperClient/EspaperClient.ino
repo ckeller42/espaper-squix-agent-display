@@ -156,16 +156,20 @@ void startDeviceSleep(uint32_t sleepSeconds, uint32_t sleepUntilEpoch) {
   int currentMillis = millis();
   time_t now = startTime + ((currentMillis - startMillis) / 1000);
   Serial.printf_P(PSTR("Start millis: %d, start time: %d, current millis: %d -> now: %d\n"),  startMillis, startTime, currentMillis, now);
-  uint64_t effectiveSleepSeconds;
+  // Signed, deliberately: this value is derived from a server-supplied epoch
+  // minus the local clock, which goes NEGATIVE whenever the clock is ahead.
+  // As uint64_t that underflowed into ~1.8e19 and the abs() below was also
+  // ambiguous under Arduino core 3.x (abs(uint64_t)).
+  int64_t effectiveSleepSeconds;
   if (sleepUntilEpoch == 0) {
     // use the local client configuration if server sends "nothing" (0 -> undefined)
     Serial.printf_P(PSTR("'sleepUntilEpoch' is 0. Using configured default update interval of %dmin.\n"),  UPDATE_INTERVAL_MINS);
     effectiveSleepSeconds = UPDATE_INTERVAL_MINS * 60;
   } else {
-    effectiveSleepSeconds = sleepUntilEpoch - now;
+    effectiveSleepSeconds = (int64_t) sleepUntilEpoch - (int64_t) now;
     // If 'now' is completely off in either direction, for whatever reason, the device would not sleep at all or sleep 
     // for far too long. It should be roughly the same value as 'sleepSeconds' provided by the server.
-    if (abs(sleepSeconds - effectiveSleepSeconds) > 600) {
+    if (llabs((int64_t) sleepSeconds - effectiveSleepSeconds) > 600) {
       effectiveSleepSeconds = sleepSeconds;
     } 
   }

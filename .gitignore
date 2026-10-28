@@ -6,3 +6,11 @@ target/*
 .clang_complete
 .gcc-flags.json
 firmware.map
+
+# Local build tooling artifacts
+.DS_Store
+settings.local.h
+firmware.map
+
+# Scratch git worktrees
+.worktrees/

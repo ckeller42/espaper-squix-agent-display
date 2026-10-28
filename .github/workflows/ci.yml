@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege at the top level; widened per-job only where needed.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    name: Build firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The image is linux/amd64 and so is the runner, so this is a native
+      # build -- no QEMU, unlike on an Apple Silicon dev machine.
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          tags: squix-espaper-build:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Compile
+        run: |
+          docker run --rm \
+            -v "$PWD:/project" -w /project \
+            -u "$(id -u):$(id -g)" \
+            squix-espaper-build:ci \
+            pio run -e Espaper29Bw-PROD
+
+      - name: Report size
+        run: |
+          docker run --rm \
+            -v "$PWD:/project" -w /project \
+            -u "$(id -u):$(id -g)" \
+            squix-espaper-build:ci \
+            pio run -e Espaper29Bw-PROD -t size
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: espaper-firmware
+          path: |
+            .pio/build/Espaper29Bw-PROD/firmware.bin
+            target/Espaper29Bw-PROD-*.bin
+          if-no-files-found: error

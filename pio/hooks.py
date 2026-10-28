@@ -22,7 +22,10 @@ for key in my_flags['CPPDEFINES']:
         print("Building client version {}.".format(CLIENT_VERSION))
 
 # get environment vars for built target
-PROJECTBUILD_DIR = env["PROJECTBUILD_DIR"]
+# PlatformIO renamed this variable: "PROJECTBUILD_DIR" in PIO 3.x (what this
+# repo was written against) became "PROJECT_BUILD_DIR" in PIO 4+. Try the
+# modern name first so the hook works on both.
+PROJECTBUILD_DIR = env.get("PROJECT_BUILD_DIR") or env["PROJECTBUILD_DIR"]
 PIOENV = env["PIOENV"]
 PROGNAME = env["PROGNAME"]
 TARGET_DIR = "target"
