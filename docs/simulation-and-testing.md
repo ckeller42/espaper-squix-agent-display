@@ -89,8 +89,10 @@ pio test -e native                      # firmware host build (9 tests)
 ./scripts/gate.sh                       # everything, in CI order
 ```
 
-**Always pass `-e` to `pio`.** `platformio.ini` sets `default_envs = native`
-and PlatformIO cannot exclude a root test suite per environment, so
+**Always pass `-e native` to `pio test`.** `platformio.ini` sets
+`default_envs = Espaper29Bw-PROD`, so a bare `pio run` builds the firmware. The
+`native` env has no `main()` (it exists for `pio test` only), and PlatformIO
+cannot exclude a root test suite per environment, so a bare `pio test` or
 `pio test -e <device env>` fails by design. `scripts/dev.sh` and CI pass `-e`
 explicitly. The native test binary starts the Python server itself from
 `server/.venv/bin/python` (override with `ESPAPER_TEST_PYTHON`), so the venv

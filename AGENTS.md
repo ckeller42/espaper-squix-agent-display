@@ -18,8 +18,9 @@ device renders screens pushed by an agent via a server on the LAN.
   containerised build + warning gate (mirrors CI; skips steps whose tool is
   missing, with a message). **The device is the last tier — do not flash until
   those are green.** Layers: `docs/simulation-and-testing.md`.
-- Always pass `-e` to `pio` (`pio test -e native`); `default_envs` is native and
-  `pio test -e <device env>` fails by design.
+- Always pass `-e` to `pio test` (`pio test -e native`); `default_envs` is the
+  firmware env, so a bare `pio run` builds firmware but a bare `pio test` (or
+  `pio test -e <device env>`) fails by design.
 - `./scripts/dev.sh build|clean|size|shell` — build only. `SQUIX_ENV` picks the
   PlatformIO env (default `Espaper29Bw-PROD`).
 - `./scripts/flash.sh` — flashes from the **host**. `SQUIX_PORT` overrides port
