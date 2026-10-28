@@ -157,6 +157,13 @@ void test_the_config_portal_value_is_never_overwritten_by_discovery();
 
 The last is a decision, not a detail: a hand-entered URL must win permanently, or the feature becomes unpredictable exactly when someone is trying to control it.
 
+**Amendment, found while implementing Task 2.** A discovered URL and a hand-entered
+one are currently stored *identically* in `/espaper.txt`, so nothing can tell them
+apart and "hand-entered wins" is unimplementable as written. This task must add a
+second key — `SERVER_URL_SOURCE` with values like `manual` / `discovered` — and
+discovery must refuse to overwrite a `manual` entry. Without it the rule above is
+a comment, not a behaviour.
+
 - [ ] **Step 2: Run to verify they fail**
 
 - [ ] **Step 3: Implement `discoverServer()`**
