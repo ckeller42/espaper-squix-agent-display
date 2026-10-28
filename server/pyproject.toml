@@ -5,12 +5,8 @@ requires-python = ">=3.12"
 dependencies = ["fastapi", "uvicorn", "pillow", "httpx", "tzdata"]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest", "httpx2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-filterwarnings = [
-    # Starlette's TestClient prefers httpx2; httpx is what the sources use and is fine for tests.
-    "ignore:Using `httpx` with `starlette.testclient`",
-]
