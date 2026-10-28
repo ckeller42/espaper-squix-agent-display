@@ -111,3 +111,28 @@ class QuoteSource:
             label=meta.get("symbol", self.symbol),
             extra=extra,
         )
+
+
+# Failures that mean "the source is unreachable or answered with something we can't read".
+# httpx.HTTPError covers timeouts, connection errors and non-2xx (raise_for_status);
+# ValueError covers invalid JSON and timestamps; KeyError/IndexError cover a changed API
+# shape; TypeError is here because Yahoo's error shape (`chart.result: null`) makes
+# QuoteSource._parse raise it. Anything else is a bug and must propagate.
+FETCH_ERRORS = (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError)
+
+# observed_at for "never fetched": the epoch, so age_of reports decades rather than a
+# plausible-looking recent age.
+NO_DATA = Reading(value="—", observed_at=datetime.fromtimestamp(0, tz=timezone.utc), label="")
+
+
+def fetch_with_fallback(source: Source, previous: Reading | None) -> tuple[Reading, bool]:
+    """Return (reading to display, whether it is a fallback to the previous value)."""
+    try:
+        return source.fetch(), False
+    except FETCH_ERRORS:
+        return (previous if previous is not None else NO_DATA), True
+
+
+def age_of(reading: Reading, now: datetime) -> timedelta:
+    """Age measured from the provider's own timestamp, never from fetch or render time."""
+    return now - reading.observed_at

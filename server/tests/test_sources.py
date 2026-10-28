@@ -2,7 +2,15 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from espaper_server.sources import QuoteSource, Reading, WeatherSource
+import httpx
+
+from espaper_server.sources import (
+    QuoteSource,
+    Reading,
+    WeatherSource,
+    age_of,
+    fetch_with_fallback,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # Both fixtures are real captured API responses (Open-Meteo and Yahoo chart, 2026-10-28);
@@ -70,3 +78,77 @@ def test_reading_is_frozen():
     except AttributeError:
         return
     raise AssertionError("Reading should be frozen")
+
+
+FIXED_NOW = datetime(2026, 10, 28, 20, 0, tzinfo=timezone.utc)
+OLD_READING = Reading(
+    value="$215.85",
+    observed_at=FIXED_NOW - timedelta(hours=15),
+    label="NVDA",
+    extra={"change": "$1.20"},
+)
+
+
+class FailingSource:
+    def __init__(self, error: Exception):
+        self.error = error
+
+    def fetch(self) -> Reading:
+        raise self.error
+
+
+class WorkingSource:
+    def fetch(self) -> Reading:
+        return OLD_READING
+
+
+TRANSPORT_AND_PARSE_ERRORS = [
+    httpx.ReadTimeout("timed out"),
+    httpx.ConnectError("unreachable"),
+    KeyError("chart"),
+    TypeError("'NoneType' object is not subscriptable"),  # Yahoo error shape
+]
+
+
+def test_timeout_falls_back_to_previous_reading():
+    reading, is_stale = fetch_with_fallback(
+        FailingSource(httpx.ReadTimeout("timed out")), previous=OLD_READING
+    )
+    assert reading == OLD_READING and is_stale is True
+
+
+def test_timeout_without_a_previous_reading_does_not_raise():
+    reading, is_stale = fetch_with_fallback(
+        FailingSource(httpx.ReadTimeout("timed out")), previous=None
+    )
+    assert is_stale is True and reading.value == "—"
+
+
+def test_every_transport_and_parse_error_falls_back():
+    for error in TRANSPORT_AND_PARSE_ERRORS:
+        reading, is_stale = fetch_with_fallback(FailingSource(error), previous=OLD_READING)
+        assert reading == OLD_READING and is_stale is True, error
+
+
+def test_unrelated_errors_are_not_swallowed():
+    for error in (KeyboardInterrupt(), RuntimeError("bug")):
+        try:
+            fetch_with_fallback(FailingSource(error), previous=OLD_READING)
+        except type(error):
+            continue
+        raise AssertionError(f"{error!r} was swallowed")
+
+
+def test_successful_fetch_is_returned_fresh():
+    reading, is_stale = fetch_with_fallback(WorkingSource(), previous=None)
+    assert reading == OLD_READING and is_stale is False
+
+
+def test_placeholder_age_is_never_mistaken_for_fresh():
+    reading, _ = fetch_with_fallback(FailingSource(KeyError("x")), previous=None)
+    assert reading.observed_at.tzinfo is not None
+    assert age_of(reading, now=FIXED_NOW) > timedelta(days=365)
+
+
+def test_age_is_measured_from_the_providers_timestamp():
+    assert age_of(OLD_READING, now=FIXED_NOW) == timedelta(hours=15)
