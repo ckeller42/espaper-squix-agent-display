@@ -1,7 +1,7 @@
 from io import BytesIO
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 from fastapi.testclient import TestClient
 
 import espaper_server.app as app_module
@@ -171,15 +171,42 @@ def test_preview_page_embeds_the_image_and_links_the_text_view(approved):
     assert 'src="/preview.png"' in body and "/preview.txt" in body
 
 
+def _hand_drawn_screen() -> Image.Image:
+    """An image no renderer would produce: a diagonal cross and a lone pixel. If /preview.png
+    re-rendered anything instead of unpacking stored bytes, it could not come back as this."""
+    image = Image.new("1", (296, 128), 1)
+    draw = ImageDraw.Draw(image)
+    draw.line([(0, 0), (295, 127)], fill=0, width=3)
+    draw.line([(0, 127), (295, 0)], fill=0)
+    draw.point((147, 5), fill=0)
+    return image
+
+
+def _assert_preview_is_the_stored_screen(client, dev, auth, drawn):
+    payload = pack_screen(drawn)
+    png = Image.open(BytesIO(client.get("/preview.png").content)).convert("1")
+    assert png.tobytes() == drawn.tobytes()
+    assert pack_screen(png) == payload == client.get(f"/public/devices/{dev}/screen", headers=auth).content
+
+
 def test_preview_png_matches_the_payload_served_to_the_device(approved):
     client = TestClient(create_app(approved))
     r = client.post("/public/devices", json=REGISTER)
     dev, auth = r.headers["X-ESPAPER-DEVICE-ID"], {"X-ESPAPER-SECRET": r.headers["X-ESPAPER-SECRET"]}
-    png = Image.open(BytesIO(client.get("/preview.png").content)).convert("1")
-    assert pack_screen(png) == client.get(f"/public/devices/{dev}/screen", headers=auth).content
+    drawn = _hand_drawn_screen()
+    approved.put_payload(pack_screen(drawn))  # replaces the approved render with bytes no renderer made
+    _assert_preview_is_the_stored_screen(client, dev, auth, drawn)
 
 
-def test_preview_before_approval_shows_what_the_device_would_get(client, device):
+def test_preview_before_approval_shows_what_the_device_would_get(client, store, device):
+    dev, auth = device
+    drawn = _hand_drawn_screen()
+    store.put_payload(pack_screen(drawn))  # nothing approved: the shelf holds only these bytes
+    assert not store.is_approved()
+    _assert_preview_is_the_stored_screen(client, dev, auth, drawn)
+
+
+def test_preview_with_nothing_stored_shows_the_waiting_screen_the_device_gets(client, device):
     dev, auth = device
     png = Image.open(BytesIO(client.get("/preview.png").content)).convert("1")
     assert pack_screen(png) == client.get(f"/public/devices/{dev}/screen", headers=auth).content
