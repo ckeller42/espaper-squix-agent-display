@@ -387,6 +387,16 @@ git commit -m "feat(server): serve the device protocol with registration and tel
 
 **Interfaces:**
 - Produces: `GET /preview` (HTML) and `GET /preview.png` (image/png).
+- Produces: `render_ascii(image: PIL.Image.Image, cols: int = 74) -> str` in
+  `server/espaper_server/render.py`, and a `GET /preview.txt` (text/plain)
+  serving it.
+
+`render_ascii` exists so the current screen can be shown in a terminal or a
+chat with no browser. 296 columns do not fit a terminal, so it downsamples:
+each output character covers a fixed block of pixels, and the character is
+chosen by how much ink that block contains. Two pixel rows per character row
+keeps the aspect ratio roughly square. Remember ink is bit **0** — an all-white
+screen must render as blank, not solid.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -403,6 +413,21 @@ def test_preview_page_shows_when_it_was_rendered_and_the_approval_state():
 def test_preview_png_matches_the_payload_served_to_the_device():
     png = Image.open(BytesIO(client.get("/preview.png").content)).convert("1")
     assert pack_screen(png) == client.get(f"/public/devices/{dev}/screen", headers=auth).content
+
+def test_ascii_render_has_the_requested_width_and_square_ish_rows():
+    art = render_ascii(render(RECIPE, READINGS, FIXED_NOW), cols=74)
+    lines = art.splitlines()
+    assert all(len(l) == 74 for l in lines)
+    assert len(lines) == 16          # 128 rows / (128/16) -- aspect kept roughly square
+
+def test_an_all_white_screen_renders_blank_not_solid():
+    # Ink is bit 0. Getting the polarity backwards here is invisible in the PNG.
+    assert render_ascii(Image.new("1", (296, 128), 1)).strip() == ""
+
+def test_preview_txt_serves_the_ascii_render():
+    r = client.get("/preview.txt")
+    assert r.headers["content-type"].startswith("text/plain")
+    assert r.text == render_ascii(current_image())
 ```
 
 The third test is the one that matters: it is what stops the preview from ever drifting from the panel.
