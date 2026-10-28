@@ -10,3 +10,7 @@ dev = ["pytest"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+filterwarnings = [
+    # Starlette's TestClient prefers httpx2; httpx is what the sources use and is fine for tests.
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
