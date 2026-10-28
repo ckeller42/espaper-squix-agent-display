@@ -526,3 +526,47 @@ Task 10/11 parked: `_parse` does not guard current["weather_code"]; a null rende
 Task 10/11 parked: a non-dict `current` or `daily` raises TypeError outside FETCH_ERRORS and
   escapes approve(). Ruling: parked. Exotic input; those key shapes were never validated.
   Both worth a follow-up ticket.
+
+## Firmware plan — Tasks 1-5, 7 executed (Tasks 6, 8 held)
+
+Executed autonomously while the board was dark, to avoid idling. All verified on BOTH tiers:
+`pio test -e native` and the containerised Xtensa build (the only proof the firmware compiles,
+since the toolchain is x86-only on this arm64 Mac).
+
+Task 1  three upstream defects fixed (ae6c2d2). Fork is CURRENT with upstream master
+        (6703a31, 2025-06-10); all three still present there; no upstream issue or PR exists.
+        Implementer CORRECTED ME: the :118/:334 fix is not behaviour-neutral as I claimed —
+        the "Client disconnected" log fired when data WAS available. Behaviour-corrective.
+Task 2  SERVER_URL is a stored setting (70a86b0). PROVISIONAL block removed from settings.h.
+        Controller closed its verification gap via the container build: +80 B RAM, 0 warnings.
+Task 3  stored-URL validation (499cc3b). NO extra request — reinterprets the existing fetch.
+        Both mutation checks bit. +68 B RAM, +484 B flash.
+Task 4  mDNS discovery (169b2a7), exception path only. +600 B RAM, +23594 B flash.
+        BEST FINDING OF THE PLAN: Task 3's no-extra-work test would have passed for the WRONG
+        REASON, because it counts TCP connects and mDNS is UDP. The implementer noticed its own
+        change had silently voided an existing guard and added MDNS.queryCount == 0.
+Task 5  server-side advertisement (25140e6), python-zeroconf, off by default, degrades to
+        serving normally when unavailable. 177 Python tests.
+Task 7  410 reboot-loop guard (5f7931a). RED was `RebootLoop: 20 boots in a row without a
+        sleep`. CONSECUTIVE_GONE counter beside TOTAL_DEVICE_STARTS; one extra flash write on
+        the 410 path only. The FAKE DEVICE drifted on purpose — its old wake() hid the loop by
+        deferring a second 410 to the next wake. Second time this fake was corrected TOWARD the
+        firmware. +12 B RAM, +244 B flash. 180 Python + 35 native.
+
+Ruling: SERVER_URL_SOURCE added (manual | discovered); discovery never overwrites `manual`,
+  permanently. Someone typing an address is exercising control, usually while debugging;
+  silently overriding that is the behaviour people hate most in auto-configuring systems.
+Ruling: a rejected `manual` URL skips discovery entirely and draws the failure screen, rather
+  than falling back to a discovered server for that wake. Same reasoning. One-line to reverse.
+Ruling: STOPPED after Task 7. Task 6 (OTA) publishes GitHub releases — outward-facing, the
+  owner's call. Task 8 is bench verification and needs the hardware.
+
+Deferred: a down server now costs a WiFi reconnect + 1.5 s query per 1-minute retry, and the
+  failure path does TWO e-ink refreshes (the parser draws its own generic error before ours).
+  E-ink refreshes are slow and wear the panel. Worth suppressing the generic one.
+Deferred: registerDevice is not routed through the Task 3 verdict.
+Deferred: a large 200 from a non-ESPaper host is written to LittleFS before it is judged.
+Deferred: ESPAPER_ADVERTISE_PORT must be hand-matched to uvicorn's --port.
+Deferred: discovery has NEVER run against a real mDNS stack; WiFi is off after the first fetch
+  (the parser passes sleepWifi as its post-download callback) and the .ino now reconnects
+  before discovery — untestable in every tier we have. Likeliest thing to need device debugging.
