@@ -6,7 +6,7 @@
 
 **Architecture:** A deterministic pipeline — recipe plus freshly fetched data goes to a renderer that produces a 1-bit 296×128 image; one packer turns that image into the 4742-byte MiniGrafx payload; the HTTP layer serves those bytes to the device and the identical render as a PNG to the browser. No model runs in this path. Data providers sit behind one small interface so an unofficial source can be swapped without touching the renderer.
 
-**Tech Stack:** Python 3.12, FastAPI + uvicorn, Pillow (1-bit rendering), httpx (data fetching), pytest. Dependencies managed with `uv`.
+**Tech Stack:** Python 3.12, FastAPI + uvicorn, Pillow (1-bit rendering), httpx2 (data fetching), pytest. Dependencies managed with `uv`.
 
 **Spec:** `docs/superpowers/specs/2026-10-28-espaper-agent-display-design.md`
 
@@ -91,7 +91,7 @@ pinned first, independently of any rendering.
 
 - [ ] **Step 1: Scaffold the package**
 
-Create `server/pyproject.toml` with `requires-python = ">=3.12"`, dependencies `fastapi`, `uvicorn`, `pillow`, `httpx`, dev dependency `pytest`, and a `[tool.pytest.ini_options]` block with `testpaths = ["tests"]`.
+Create `server/pyproject.toml` with `requires-python = ">=3.12"`, dependencies `fastapi`, `uvicorn`, `pillow`, `httpx2`, dev dependency `pytest`, and a `[tool.pytest.ini_options]` block with `testpaths = ["tests"]`.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -184,7 +184,7 @@ Run: `cd server && uv run pytest tests/test_sources.py -v`
 
 - [ ] **Step 3: Implement `sources.py`**
 
-`WeatherSource.fetch()` calls `https://api.open-meteo.com/v1/forecast` (no key) requesting `current=temperature_2m,weather_code` and the daily min/max and precipitation probability. `QuoteSource.fetch()` calls `https://query1.finance.yahoo.com/v8/finance/chart/{symbol}` with a browser `User-Agent`, reading `chart.result[0].meta`. Split parsing into `_parse(payload)` so the tests above need no network. Both use `httpx` with an explicit timeout.
+`WeatherSource.fetch()` calls `https://api.open-meteo.com/v1/forecast` (no key) requesting `current=temperature_2m,weather_code` and the daily min/max and precipitation probability. `QuoteSource.fetch()` calls `https://query1.finance.yahoo.com/v8/finance/chart/{symbol}` with a browser `User-Agent`, reading `chart.result[0].meta`. Split parsing into `_parse(payload)` so the tests above need no network. Both use `httpx2` with an explicit timeout.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 

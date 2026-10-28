@@ -19,5 +19,11 @@ build.log
 # Local gate scratch output
 build.log
 
-# Brainstorming visual companion
-.superpowers/
+# Brainstorming visual companion and SDD scratch. Only the per-run ledger
+# (.superpowers/sdd/<run>/progress.md) is tracked: it holds the rulings behind the commits.
+.superpowers/*
+!.superpowers/sdd/
+.superpowers/sdd/*
+!.superpowers/sdd/*/
+.superpowers/sdd/*/*
+!.superpowers/sdd/*/progress.md
