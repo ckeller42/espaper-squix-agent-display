@@ -154,6 +154,38 @@ def _quote_with_meta(**overrides):
     return payload
 
 
+def _quote_with_result(result):
+    return {"chart": {"result": result, "error": None}}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _quote_with_result([None]),
+        _quote_with_result(["not-a-dict"]),
+        _quote_with_result([{"meta": None}]),
+        _quote_with_result([{"meta": "not-a-dict"}]),
+        _quote_with_meta(chartPreviousClose="n/a"),
+    ],
+    ids=["result0-null", "result0-str", "meta-null", "meta-str", "previous-close-non-numeric"],
+)
+def test_quote_parse_raises_value_error_on_malformed_structure(payload):
+    with pytest.raises(ValueError):
+        QuoteSource("NVDA")._parse(payload)
+
+
+def test_quote_parse_still_accepts_an_absent_or_null_previous_close():
+    for value in (None, "absent"):
+        payload = _quote_with_meta()
+        meta = payload["chart"]["result"][0]["meta"]
+        if value is None:
+            meta["chartPreviousClose"] = None
+        else:
+            del meta["chartPreviousClose"]
+        reading = QuoteSource("NVDA")._parse(payload)
+        assert reading.value == "$215.85" and "change" not in reading.extra
+
+
 @pytest.mark.parametrize(
     "payload",
     [

@@ -104,7 +104,10 @@ class QuoteSource:
                 f"Yahoo returned no result for {self.symbol}: "
                 f"{error.get('code', 'unknown')}: {error.get('description', 'no description')}"
             )
-        meta = chart["result"][0]["meta"]
+        first = chart["result"][0]
+        meta = first.get("meta") if isinstance(first, dict) else None
+        if not isinstance(meta, dict):
+            raise ValueError(f"Yahoo payload for {self.symbol} has no meta object")
         currency = meta["currency"]
         price = meta["regularMarketPrice"]
         market_time = meta["regularMarketTime"]
@@ -120,6 +123,8 @@ class QuoteSource:
             ) from exc
         extra: dict[str, str] = {}
         previous = meta.get("chartPreviousClose")
+        if previous is not None and not isinstance(previous, (int, float)):
+            raise ValueError(f"Yahoo meta for {self.symbol}: bad chartPreviousClose {previous!r}")
         if previous is not None:
             extra["previous_close"] = _money(previous, currency)
             extra["change"] = _money(round(price - previous, 2), currency)
