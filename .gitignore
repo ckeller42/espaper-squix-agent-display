@@ -18,3 +18,6 @@ build.log
 
 # Local gate scratch output
 build.log
+
+# Brainstorming visual companion
+.superpowers/
