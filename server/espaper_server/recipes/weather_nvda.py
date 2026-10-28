@@ -1,4 +1,4 @@
-"""The shipped screen: Berlin weather on the left (about 60 %), the NVDA quote on the right."""
+"""The shipped screen: Stuttgart weather on the left (about 60 %), the NVDA quote on the right."""
 
 from espaper_server.recipe import Panel, Recipe
 
@@ -20,9 +20,9 @@ RECIPE = Recipe(
     timezone="Europe/Berlin",
     panels=[
         Panel(
-            source={"type": "weather", "latitude": 52.52, "longitude": 13.41},
+            source={"type": "weather", "latitude": 48.77, "longitude": 9.18},
             weight=0.6,
-            title="Berlin",
+            title="Stuttgart",
             primary="{value}",
             lines=["{extra[weather_code]}", "H {extra[high]}  L {extra[low]}", "Rain {extra[precipitation]}", "{time}"],
             translate={"weather_code": WMO_CODES},

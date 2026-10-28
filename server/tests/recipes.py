@@ -12,9 +12,9 @@ RECIPE = Recipe(
     timezone="Europe/Berlin",
     panels=[
         Panel(
-            source={"type": "weather", "latitude": 52.52, "longitude": 13.41},
+            source={"type": "weather", "latitude": 48.77, "longitude": 9.18},
             weight=0.63,
-            title="Berlin",
+            title="Stuttgart",
             primary="{value}",
             lines=["{extra[weather_code]}", "H {extra[high]}  L {extra[low]}", "{time}"],
             translate={"weather_code": WMO},

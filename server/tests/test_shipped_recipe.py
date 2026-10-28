@@ -7,9 +7,11 @@ from espaper_server.store import source_for
 from tests.recipes import FIXED_NOW, READINGS
 
 
-def test_shipped_recipe_is_weather_left_and_nvda_right_in_berlin():
+def test_shipped_recipe_is_weather_left_and_nvda_right_in_stuttgart():
     weather, quote = SHIPPED.panels
-    assert SHIPPED.timezone == "Europe/Berlin"
+    assert SHIPPED.timezone == "Europe/Berlin"  # Stuttgart's timezone
+    assert weather.title == "Stuttgart"
+    assert (weather.source["latitude"], weather.source["longitude"]) == (48.77, 9.18)
     assert weather.source["type"] == "weather" and quote.source == {"type": "quote", "symbol": "NVDA"}
     assert 0.55 <= weather.weight / (weather.weight + quote.weight) <= 0.65
     assert weather.attribution == "Weather data by Open-Meteo.com"
