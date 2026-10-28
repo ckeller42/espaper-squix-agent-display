@@ -24,41 +24,83 @@ list_candidate_ports() {
     ls /dev/cu.usbserial-* /dev/cu.SLAB_USBtoUART* /dev/cu.wchusbserial* 2>/dev/null || true
 }
 
-# ---------------------------------------------------------------------------
-# TODO(you): implement select_port()
+# Pick the serial port to flash.
 #
-# Contract: echo exactly one device path on stdout and return 0, or write a
-# message to stderr and return 1. $SQUIX_PORT, if set, must always win so the
-# script stays scriptable/CI-friendly.
+# Policy, and why:
+#   $SQUIX_PORT always wins          -- keeps the script scriptable and lets
+#                                       CI/agents run without a terminal.
+#   0 candidates -> fail with a hint -- the usual causes are a device that is
+#                                       switched off or a programmer plugged
+#                                       in the wrong way round, not a missing
+#                                       driver (macOS has CP210x built in).
+#   1 candidate  -> take it, say so  -- the common case, no friction.
+#   2+ candidates-> menu, or refuse  -- the dangerous case. Auto-picking the
+#                                       first match can flash a DIFFERENT
+#                                       board (router, Pi, another ESP), so
+#                                       require a human to choose. With no
+#                                       terminal there is nobody to ask, so
+#                                       refuse rather than guess.
 #
-# Input to work with:
-#   local -a ports=( $(list_candidate_ports) )   # may be 0, 1 or many entries
-#
-# The three cases and what is actually at stake:
-#
-#   0 ports  -> Right now this is YOUR situation: nothing enumerates. Do you
-#              fail immediately with a hint about the CP210x/CH340 driver, or
-#              poll for a few seconds so you can plug in after starting the
-#              script? Polling is friendlier at the desk but hangs CI.
-#
-#   1 port   -> Obvious: use it. The only question is whether to say so.
-#
-#   2+ ports -> The interesting one. You own a GL-iNet router, a WalkingPad
-#              and assorted Pi gear, so a second adapter being plugged in is
-#              realistic. Auto-picking the first match can flash the WRONG
-#              device -- recoverable on a dev board, annoying on something
-#              mid-deployment. Prompt with a numbered menu? Refuse and demand
-#              $SQUIX_PORT? Prefer the most recently appeared device?
-#
-# My suggestion if you want one: fail fast on 0 with the driver hint, take the
-# single match silently on 1, and on 2+ print a numbered menu when stdin is a
-# TTY ([[ -t 0 ]]) but hard-fail otherwise -- that keeps it safe interactively
-# and deterministic in automation. But the 2+ policy is a real judgement call
-# about how much you trust an auto-pick, so it should be yours.
-# ---------------------------------------------------------------------------
+# Echoes one device path on stdout; all chatter goes to stderr so that
+# `port="$(select_port)"` captures only the path.
 select_port() {
-    echo "select_port() is not implemented yet -- see scripts/flash.sh" >&2
-    return 1
+    local ports=()
+    local p
+    while IFS= read -r p; do
+        [[ -n "$p" ]] && ports+=("$p")
+    done < <(list_candidate_ports)
+
+    case "${#ports[@]}" in
+        0)
+            cat >&2 <<'NOPORT'
+No USB serial adapter found.
+
+Checks, in the order they usually fail:
+  1. Is the ESPaper switched ON? The programmer only powers it if it is.
+     (The e-paper keeps its image when off, so the screen tells you nothing.)
+  2. Is the programmer the right way round? Its +5V pin must line up with
+     the 5V pin on the ESPaper, components facing down/back. Plugged in
+     reversed the adapter still enumerates on USB but the UART goes nowhere.
+  3. Is the ESPaper's own USB port also plugged in? Do not power it from
+     both at once.
+NOPORT
+            return 1
+            ;;
+        1)
+            echo "==> using ${ports[0]}" >&2
+            echo "${ports[0]}"
+            return 0
+            ;;
+        *)
+            if [[ ! -t 0 ]]; then
+                {
+                    echo "Found ${#ports[@]} serial adapters and there is no terminal to ask."
+                    echo "Refusing to guess -- flashing the wrong board is not recoverable"
+                    echo "by this script. Re-run with the one you want:"
+                    echo
+                    for p in "${ports[@]}"; do echo "    SQUIX_PORT=$p $0 $*"; done
+                } >&2
+                return 1
+            fi
+
+            echo "Several serial adapters are connected:" >&2
+            local i=1
+            for p in "${ports[@]}"; do
+                printf '  %d) %s\n' "$i" "$p" >&2
+                i=$((i + 1))
+            done
+
+            local choice
+            read -r -p "Which one is the ESPaper? [1-${#ports[@]}] " choice
+            if ! [[ "$choice" =~ ^[0-9]+$ ]] \
+               || (( choice < 1 || choice > ${#ports[@]} )); then
+                echo "Not a valid choice: '$choice'" >&2
+                return 1
+            fi
+            echo "${ports[$((choice - 1))]}"
+            return 0
+            ;;
+    esac
 }
 
 require_esptool() {
@@ -86,15 +128,31 @@ main() {
     local port
     port="${SQUIX_PORT:-$(select_port)}"
 
-    echo "==> flashing (auto-reset into bootloader; no buttons needed)"
-    echo "    if this fails: switch the device on, check the programmer's 5V"
-    echo "    pin alignment, then hold S0 / tap RST / release RST / release S0"
+    echo
+    echo "==> Put the ESPaper into flash mode:"
+    echo "      hold S0  ->  tap RST  ->  release RST  ->  release S0"
+    # Only block when a human is present; otherwise the read hits EOF under
+    # `set -e` and kills the script. The ESP stays in the bootloader until the
+    # next reset, so a non-interactive run is fine if the buttons were pressed
+    # beforehand.
+    if [[ -t 0 ]]; then
+        read -r -p "    press Enter when done "
+    else
+        echo "    (non-interactive: assuming the device is already in flash mode)"
+    fi
 
-    # VERIFIED on real hardware: DTR/RTS ARE wired to GPIO0/RST on this
-    # programmer, so esptool enters the bootloader by itself -- matching
-    # upstream's "upload_resetmethod = nodemcu". The manual S0+RST dance from
-    # the ThingPulse guide is a fallback, not a requirement.
-    # --after hard-reset so the device boots the firmware we just wrote.
+    # DTR/RTS are NOT wired to GPIO0/RST on this programmer, so the bootloader
+    # must be entered by hand -- as the ThingPulse guide says.
+    #
+    # Do not be fooled by a successful connect with --before default-reset:
+    # that only proves the chip was ALREADY in the bootloader (e.g. you had
+    # just pressed the buttons). The decisive test is flashing a device that
+    # is running the application -- with auto-reset that works, and here it
+    # fails with "No serial data received". Upstream's
+    # "upload_resetmethod = nodemcu" does not reflect this kit's wiring.
+    #
+    # --after no-reset for the same reason: tap RST yourself to run the new
+    # firmware.
     #
     # flash-size 2MB matches board_build.ldscript (eagle.flash.2m512.ld), NOT
     # the chip's physical size -- this unit reports 4MB. The header and the
@@ -102,7 +160,7 @@ main() {
     #
     # dout (not qio) matches board_build.flash_mode in platformio.ini.
     esptool --chip esp8266 --port "$port" --baud "$BAUD" \
-        --before default-reset --after hard-reset \
+        --before no-reset --after no-reset \
         write-flash --flash-mode dout --flash-size 2MB 0x0 "$FIRMWARE"
 
     if [[ $do_monitor -eq 1 ]]; then
