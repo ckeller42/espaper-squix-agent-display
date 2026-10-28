@@ -26,8 +26,10 @@ def test_a_device_with_stored_identity_does_not_register_again(live_server):
     d = FakeDevice(live_server)
     d.register()
     d.wake()
-    d.wake()
+    _, sleep_s = d.wake()
     assert registered_device_count(live_server) == 1
+    # registered on an earlier boot, so the server's schedule applies, not the 60 s retry
+    assert sleep_s == live_server.store.sleep_seconds() != 60
 
 
 def test_a_device_with_no_identity_registers_on_its_first_wake(live_server):
