@@ -17,7 +17,11 @@ concurrency:
 jobs:
   firmware:
     name: Build firmware
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the floating label emits a migration notice on
+    # every run and silently changes the toolchain underneath us. The firmware
+    # toolchain itself lives in our Docker image, so the runner only needs to be
+    # a stable x86_64 Linux host.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
