@@ -500,3 +500,29 @@ Task 9: minor (deferred): registration test does not assert the id round-trips; 
 Task 9: complete (commits 2f4c189..c2d88a9, review clean)
 Tasks 10+11: BASE=c2d88a9, dispatched together (docs + CI are the two finishing tasks and the
   docs describe the gate the CI wires).
+
+## Final whole-branch review + fix wave
+
+Final review (opus, 4 passes, 270 KB): "Ready with fixes" — 0 Critical, 6 Important.
+It RAN things rather than reasoning: truncated screen.bin, hand-drew a payload, ran `pio run`.
+Confirmed the architecture holds by grep — weather|stock|nvda|quote|temperature|meteo|yahoo
+across render.py, packer.py, recipe.py, app.py hits COMMENTS ONLY.
+Fix wave: all 7 applied in one dispatch (6098198, cc6801a, efe05e4, eef7a10, fa7d263, 5b0b7c7).
+172 Python + 9 native tests, GATE PASSED (5 of 5). Re-review: all addressed, blockers closed.
+
+Ruling: `default_envs = native` REVERTED to Espaper29Bw-PROD. My earlier ruling recorded the
+  side effect as "surprising"; the final reviewer ran it and found it BROKEN — a bare `pio run`
+  died with undefined `_main`, because the native env compiles only EspaperParser.cpp with no
+  main and no board stubs. I was wrong; `pio test -e native` stays mandatory instead.
+
+Task 9 ⚠️ resolved by me: EspaperClient/settings.h SERVER_URL is bar's DHCP address. Ruling:
+  leave the value, add a PROVISIONAL comment naming spec decisions 1 and 13 and the cost of
+  getting it wrong (error screen, 60 s retry loop, physical reflash). A comment-only change
+  keeps the fork reviewable against upstream. Cost if wrong: someone flashes without reading.
+
+Task 10/11 parked: `_parse` does not guard current["weather_code"]; a null renders the literal
+  "None" in the description line — same "confident non-value" class as Fix 1, secondary line.
+  Ruling: parked. Real, not a regression, and the process allows no second fix wave.
+Task 10/11 parked: a non-dict `current` or `daily` raises TypeError outside FETCH_ERRORS and
+  escapes approve(). Ruling: parked. Exotic input; those key shapes were never validated.
+  Both worth a follow-up ticket.

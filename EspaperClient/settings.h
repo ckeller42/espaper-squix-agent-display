@@ -173,6 +173,12 @@ const String SERVER_API_DEVICES_PATH = "/public/devices";
   // use empty array as a placeholder, as the scheme is HTTP rather
   // than HTTPS it won't actually be used, see EspaperParser::createWifiClient
   static const char rootCaCert[] PROGMEM = {};
+  // PROVISIONAL. This is a DHCP address on the development Mac, not a
+  // deployment value: spec decision 1 puts the server on odelly, and decision
+  // 13 has the device DISCOVER its server precisely so a compiled-in address
+  // cannot strand it. Neither is implemented yet (both belong to the firmware
+  // plan). A wrong address here costs an error screen, a 60 s retry loop and a
+  // physical reflash to correct, so CHECK THIS BEFORE FLASHING.
   const String SERVER_URL = "http://192.168.178.43:8411";
   #define USE_SECURE_WIFI_CLIENT 0
 #else
