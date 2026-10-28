@@ -212,6 +212,69 @@ def test_quote_parse_raises_value_error_on_null_or_invalid_fields(payload):
         QuoteSource("NVDA")._parse(payload)
 
 
+# Synthetic malformed Open-Meteo payloads, built by mutating the captured fixture. Open-Meteo
+# does return null for values it has not got; each of these used to display "None °C" or escape
+# as a TypeError outside FETCH_ERRORS.
+def _weather_with(path, value):
+    payload = json.loads(json.dumps(WEATHER_FIXTURE))
+    target = payload
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    return payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _weather_with(["current", "temperature_2m"], None),
+        _weather_with(["current", "temperature_2m"], "9.2"),
+        _weather_with(["current", "time"], None),
+        _weather_with(["current", "time"], "not-a-time"),
+        _weather_with(["utc_offset_seconds"], None),
+        _weather_with(["utc_offset_seconds"], "3600"),
+        _weather_with(["daily", "temperature_2m_max"], [None]),
+        _weather_with(["daily", "temperature_2m_min"], [None]),
+        _weather_with(["daily", "precipitation_probability_max"], [None]),
+        _weather_with(["daily", "temperature_2m_max"], []),
+        _weather_with(["daily", "temperature_2m_max"], None),
+        _weather_with(["daily", "temperature_2m_max"], ["13.7"]),
+    ],
+    ids=[
+        "temperature-null",
+        "temperature-str",
+        "time-null",
+        "time-garbage",
+        "utc-offset-null",
+        "utc-offset-str",
+        "high-null",
+        "low-null",
+        "precipitation-null",
+        "high-empty-list",
+        "high-list-null",
+        "high-str",
+    ],
+)
+def test_weather_parse_raises_value_error_on_null_or_invalid_fields(payload):
+    with pytest.raises(ValueError):
+        weather()._parse(payload)
+
+
+def test_weather_null_reading_falls_back_instead_of_displaying_none():
+    class Bad:
+        def fetch(self):
+            return weather()._parse(_weather_with(["current", "temperature_2m"], None))
+
+    reading, stale = fetch_with_fallback(Bad(), previous=OLD_READING)
+    assert stale and reading is OLD_READING
+
+
+def test_quote_error_that_is_a_truthy_non_dict_raises_value_error():
+    payload = {"chart": {"result": None, "error": "boom"}}
+    with pytest.raises(ValueError):
+        QuoteSource("NVDA")._parse(payload)
+
+
 def test_a_type_error_is_a_bug_and_is_not_swallowed():
     with pytest.raises(TypeError):
         fetch_with_fallback(FailingSource(TypeError("bug")), previous=OLD_READING)

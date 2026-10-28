@@ -61,21 +61,44 @@ class WeatherSource:
         units = payload["current_units"]
         daily = payload["daily"]
         daily_units = payload["daily_units"]
-        # current.time is local to the requested timezone with no offset suffix.
-        offset = timezone(timedelta(seconds=payload["utc_offset_seconds"]))
-        observed_at = datetime.fromisoformat(current["time"]).replace(tzinfo=offset)
+        temperature = current["temperature_2m"]
+        if not isinstance(temperature, (int, float)):
+            raise ValueError(f"Open-Meteo: bad current temperature_2m {temperature!r}")
+        utc_offset = payload["utc_offset_seconds"]
+        if not isinstance(utc_offset, (int, float)):
+            raise ValueError(f"Open-Meteo: bad utc_offset_seconds {utc_offset!r}")
+        local_time = current["time"]
+        if not isinstance(local_time, str):
+            raise ValueError(f"Open-Meteo: bad current time {local_time!r}")
+        try:
+            # current.time is local to the requested timezone with no offset suffix.
+            offset = timezone(timedelta(seconds=utc_offset))
+            observed_at = datetime.fromisoformat(local_time).replace(tzinfo=offset)
+        except (OverflowError, ValueError) as exc:
+            raise ValueError(f"Open-Meteo: bad current time or offset {local_time!r}, {utc_offset!r}") from exc
+        high, low, rain = (
+            self._first_number(daily, name)
+            for name in ("temperature_2m_max", "temperature_2m_min", "precipitation_probability_max")
+        )
         return Reading(
-            value=f"{current['temperature_2m']} {units['temperature_2m']}",
+            value=f"{temperature} {units['temperature_2m']}",
             observed_at=observed_at,
             label="Weather",
             extra={
-                "high": f"{daily['temperature_2m_max'][0]} {daily_units['temperature_2m_max']}",
-                "low": f"{daily['temperature_2m_min'][0]} {daily_units['temperature_2m_min']}",
-                "precipitation": f"{daily['precipitation_probability_max'][0]} "
-                f"{daily_units['precipitation_probability_max']}",
+                "high": f"{high} {daily_units['temperature_2m_max']}",
+                "low": f"{low} {daily_units['temperature_2m_min']}",
+                "precipitation": f"{rain} {daily_units['precipitation_probability_max']}",
                 "weather_code": str(current["weather_code"]),
             },
         )
+
+    @staticmethod
+    def _first_number(daily: dict[str, Any], name: str) -> int | float:
+        series = daily[name]
+        value = series[0] if isinstance(series, list) and series else None
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"Open-Meteo: bad daily {name} {series!r}")
+        return value
 
 
 class QuoteSource:
@@ -99,7 +122,8 @@ class QuoteSource:
         if not isinstance(chart, dict):
             raise ValueError(f"Yahoo payload for {self.symbol} has no chart object")
         if not chart.get("result"):
-            error = chart.get("error") or {}
+            error = chart.get("error")
+            error = error if isinstance(error, dict) else {}
             raise ValueError(
                 f"Yahoo returned no result for {self.symbol}: "
                 f"{error.get('code', 'unknown')}: {error.get('description', 'no description')}"
