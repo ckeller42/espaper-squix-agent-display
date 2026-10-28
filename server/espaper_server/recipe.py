@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 @dataclass(frozen=True)
 class Panel:
-    """One region. Templates use str.format fields: {label} {value} {time} {change_pct}
+    """One region. Templates use str.format fields: {label} {value} {time}, fields named in `derive`,
     and {extra[key]}. A line that references a field the reading lacks is dropped."""
 
     source: dict[str, Any]  # opaque to the renderer; the caller turns it into a Source
@@ -23,10 +23,15 @@ class Panel:
     translate: dict[str, dict[str, str]] = field(default_factory=dict)  # extra key -> raw -> text
     attribution: str = ""  # small credit pinned to the panel's bottom edge
     max_primary: int = 40  # largest pixel size the primary figure may use
+    # extra template fields computed from extra keys, e.g. {"pct": {"percent_of": ["a", "b"]}}
+    derive: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.weight <= 0:
             raise ValueError(f"panel weight must be positive, got {self.weight}")
+        for name, spec in self.derive.items():
+            if set(spec) != {"percent_of"} or len(spec["percent_of"]) != 2:
+                raise ValueError(f"derive {name!r}: expected {{'percent_of': [a, b]}}, got {spec}")
         object.__setattr__(self, "lines", tuple(self.lines))
 
 

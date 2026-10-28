@@ -78,9 +78,11 @@ def _fields(panel: Panel, reading: Reading, tz: ZoneInfo, now: datetime, stale: 
         return fields
     shown = f"{reading.observed_at.astimezone(tz):%H:%M %Z}"
     fields["time"] = f"{shown} · {_age_text(age_of(reading, now))}" if stale else shown
-    pct = _percent(reading.extra.get("change", ""), reading.extra.get("previous_close", ""))
-    if pct:
-        fields["change_pct"] = pct
+    for name, spec in panel.derive.items():
+        top, bottom = spec["percent_of"]
+        derived = _percent(reading.extra.get(top, ""), reading.extra.get(bottom, ""))
+        if derived:
+            fields[name] = derived
     return fields
 
 
@@ -106,8 +108,7 @@ def _fit_size(text: str, draw: ImageDraw.ImageDraw, width: int, bold: bool, larg
 
 
 def _draw_panel(
-    panel: Panel, reading: Reading, width: int, tz: ZoneInfo, now: datetime, stale: bool,
-    drawn: list[str],
+    panel: Panel, reading: Reading, width: int, tz: ZoneInfo, now: datetime, stale: bool
 ) -> Image.Image:
     canvas = Image.new("1", (width - GUTTER, SCREEN_HEIGHT), PAPER)  # drawing past its edge is a no-op
     draw = ImageDraw.Draw(canvas)
@@ -115,7 +116,6 @@ def _draw_panel(
 
     def put(y: int, text: str, bold: bool, size: int) -> int:
         draw.text((PAD_X, y), text, font=_font(bold, size), fill=INK)
-        drawn.append(text)
         return y + _font(bold, size).getbbox("Hg")[3] + 2
 
     fields = _fields(panel, reading, tz, now, stale)
@@ -140,6 +140,20 @@ def _draw_panel(
     return canvas
 
 
+def _panel_boxes(recipe: Recipe) -> list[tuple[int, int]]:
+    """(start, end) columns of each panel, split by weight; a one-pixel rule sits at each
+    interior end, and the next panel starts just after it. The last panel ends at the edge."""
+    rules = len(recipe.panels) - 1
+    total = sum(p.weight for p in recipe.panels)
+    boxes, start, share = [], 0, 0.0
+    for i, panel in enumerate(recipe.panels):
+        share += panel.weight / total
+        end = SCREEN_WIDTH if i == rules else round((SCREEN_WIDTH - rules) * share)
+        boxes.append((start, end))
+        start = end + 1
+    return boxes
+
+
 def render(
     recipe: Recipe,
     readings: Sequence[Reading],
@@ -152,22 +166,14 @@ def render(
         raise ValueError(f"{len(recipe.panels)} panels need as many readings, got {len(readings)}")
     stale_flags = list(stale) + [False] * (len(readings) - len(stale))
     tz = ZoneInfo(recipe.timezone)
-    rules = len(recipe.panels) - 1
-    total_weight = sum(p.weight for p in recipe.panels)
-
+    boxes = _panel_boxes(recipe)
     screen = Image.new("1", (SCREEN_WIDTH, SCREEN_HEIGHT), PAPER)
-    drawn: list[str] = []
-    x, share = 0, 0.0
-    for i, (panel, reading) in enumerate(zip(recipe.panels, readings)):
-        share += panel.weight / total_weight
-        edge = SCREEN_WIDTH if i == len(recipe.panels) - 1 else round((SCREEN_WIDTH - rules) * share)
-        screen.paste(_draw_panel(panel, reading, edge - x, tz, now, stale_flags[i], drawn), (x, 0))
-        if i < rules:
+    for i, (panel, reading, (x, edge)) in enumerate(zip(recipe.panels, readings, boxes)):
+        screen.paste(_draw_panel(panel, reading, edge - x, tz, now, stale_flags[i]), (x, 0))
+        if i < len(boxes) - 1:
             ImageDraw.Draw(screen).line(
                 [(edge, RULE_INSET), (edge, SCREEN_HEIGHT - 1 - RULE_INSET)], fill=INK
             )
-        x = edge + 1
-    screen.info["text"] = tuple(drawn)  # what was drawn, for tests and debugging
     return screen
 
 

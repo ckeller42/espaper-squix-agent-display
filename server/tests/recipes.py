@@ -26,6 +26,7 @@ RECIPE = Recipe(
             title="{label} · {extra[exchange]}",
             primary="{value}",
             lines=["{extra[change]} ({change_pct})", "{time}"],
+            derive={"change_pct": {"percent_of": ["change", "previous_close"]}},
             max_primary=28,
         ),
     ],
