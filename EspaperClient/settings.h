@@ -173,7 +173,9 @@ const String SERVER_API_DEVICES_PATH = "/public/devices";
   // use empty array as a placeholder, as the scheme is HTTP rather
   // than HTTPS it won't actually be used, see EspaperParser::createWifiClient
   static const char rootCaCert[] PROGMEM = {};
-  const String SERVER_URL = "http://192.168.0.146:8080";
+  // Default for a device with no stored SERVER_URL; a value saved in the config
+  // portal (or written by discovery) overrides it. Not a deployment address.
+  const String SERVER_URL_DEFAULT = "http://192.168.178.43:8411";
   #define USE_SECURE_WIFI_CLIENT 0
 #else
   #define USE_SECURE_WIFI_CLIENT 1
@@ -212,14 +214,24 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )EOF";
     #ifdef TEST_ENV
-      const String SERVER_URL = "https://test.espaper.com";
+      const String SERVER_URL_DEFAULT = "https://test.espaper.com";
 
     #else
       // PROD
-      const String SERVER_URL = "https://www.espaper.com";
+      const String SERVER_URL_DEFAULT = "https://www.espaper.com";
     #endif
 
 #endif
+
+// FORK CHANGE: SERVER_URL was a compile-time const. It is now a setting; the compiled-in value above
+// is only the default for a device with no stored one (configportal.h loadConfig()).
+static String SERVER_URL = SERVER_URL_DEFAULT;
+// FORK CHANGE (Task 4): who set SERVER_URL. "" = nobody (the compiled default is in use),
+// "manual" = a person typed it into the config portal, "discovered" = found by mDNS (discovery.h).
+// Discovery may replace "" and "discovered", never "manual".
+#define SERVER_URL_SOURCE_MANUAL "manual"
+#define SERVER_URL_SOURCE_DISCOVERED "discovered"
+static String SERVER_URL_SOURCE = "";
 
 /***************************
  * Functions
@@ -237,6 +249,8 @@ static void resetUserSettings() {
   NTP_SERVERS = "0.pool.ntp.org,1.pool.ntp.org,2.pool.ntp.org";
   DEVICE_ID = "";
   DEVICE_SECRET = "";
+  SERVER_URL = SERVER_URL_DEFAULT;
+  SERVER_URL_SOURCE = "";
 }
 
 #endif //SETTINGS_H

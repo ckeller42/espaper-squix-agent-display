@@ -1,0 +1,218 @@
+"""Data sources behind one interface. Each fetch returns a formatted Reading."""
+
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Any, Protocol
+
+import httpx2
+
+TIMEOUT = httpx2.Timeout(10.0)
+BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
+
+# Yahoo answers an unauthenticated chart request with 429 intermittently - three identical
+# cookieless requests seconds apart returned 200, 429, 200 - so the failure is flaky rather
+# than a missing session, and a bounded retry is the fix, not a cookie/crumb handshake.
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# Yahoo fails roughly half of all cold requests (measured: 5 curl calls 200/429/429/200/429,
+# 5 httpx2 calls 200/200/200/429/429), so three attempts would still leave a blank panel one
+# time in eight. Five attempts put that near 3% at a worst case of 7.5 s of backoff, which a
+# once-per-cycle approve can afford.
+RETRY_ATTEMPTS = 5
+RETRY_BACKOFF = 0.5  # seconds before the first retry, doubled for each one after
+
+
+def _get(
+    url: str,
+    *,
+    params: dict[str, Any],
+    headers: dict[str, str] | None = None,
+    get: Callable[..., httpx2.Response] = httpx2.get,
+    sleep: Callable[[float], None] = time.sleep,
+) -> httpx2.Response:
+    """GET url, retrying the statuses that mean "ask again later". Raises on the last attempt,
+    so a caller's raise_for_status contract is unchanged. get and sleep are injectable for tests."""
+    for attempt in range(RETRY_ATTEMPTS):
+        response = get(url, params=params, headers=headers or {}, timeout=TIMEOUT)
+        if response.status_code not in RETRY_STATUSES or attempt == RETRY_ATTEMPTS - 1:
+            break
+        sleep(RETRY_BACKOFF * 2**attempt)
+    response.raise_for_status()
+    return response
+
+
+@dataclass(frozen=True)
+class Reading:
+    value: str  # already formatted, unit or currency included
+    observed_at: datetime  # timezone-aware, the provider's own timestamp
+    label: str
+    extra: dict[str, str] = field(default_factory=dict)
+
+
+class Source(Protocol):
+    def fetch(self) -> Reading: ...
+
+
+def _money(amount: float, currency: str) -> str:
+    sign = "-" if amount < 0 else ""
+    prefix = CURRENCY_SYMBOLS.get(currency, f"{currency} ")
+    return f"{sign}{prefix}{abs(amount):.2f}"
+
+
+class WeatherSource:
+    URL = "https://api.open-meteo.com/v1/forecast"
+
+    def __init__(self, latitude: float, longitude: float, timezone: str):
+        self.latitude = latitude
+        self.longitude = longitude
+        self.timezone = timezone
+
+    def fetch(self) -> Reading:
+        response = _get(
+            self.URL,
+            params={
+                "latitude": self.latitude,
+                "longitude": self.longitude,
+                "current": "temperature_2m,weather_code",
+                "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+                "timezone": self.timezone,
+                "forecast_days": 1,
+            },
+        )
+        return self._parse(response.json())
+
+    def _parse(self, payload: dict[str, Any]) -> Reading:
+        current = payload["current"]
+        units = payload["current_units"]
+        daily = payload["daily"]
+        daily_units = payload["daily_units"]
+        temperature = current["temperature_2m"]
+        if not isinstance(temperature, (int, float)):
+            raise ValueError(f"Open-Meteo: bad current temperature_2m {temperature!r}")
+        utc_offset = payload["utc_offset_seconds"]
+        if not isinstance(utc_offset, (int, float)):
+            raise ValueError(f"Open-Meteo: bad utc_offset_seconds {utc_offset!r}")
+        local_time = current["time"]
+        if not isinstance(local_time, str):
+            raise ValueError(f"Open-Meteo: bad current time {local_time!r}")
+        try:
+            # current.time is local to the requested timezone with no offset suffix.
+            offset = timezone(timedelta(seconds=utc_offset))
+            observed_at = datetime.fromisoformat(local_time).replace(tzinfo=offset)
+        except (OverflowError, ValueError) as exc:
+            raise ValueError(f"Open-Meteo: bad current time or offset {local_time!r}, {utc_offset!r}") from exc
+        high, low, rain = (
+            self._first_number(daily, name)
+            for name in ("temperature_2m_max", "temperature_2m_min", "precipitation_probability_max")
+        )
+        return Reading(
+            value=f"{temperature} {units['temperature_2m']}",
+            observed_at=observed_at,
+            label="Weather",
+            extra={
+                "high": f"{high} {daily_units['temperature_2m_max']}",
+                "low": f"{low} {daily_units['temperature_2m_min']}",
+                "precipitation": f"{rain} {daily_units['precipitation_probability_max']}",
+                "weather_code": str(current["weather_code"]),
+            },
+        )
+
+    @staticmethod
+    def _first_number(daily: dict[str, Any], name: str) -> int | float:
+        series = daily[name]
+        value = series[0] if isinstance(series, list) and series else None
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"Open-Meteo: bad daily {name} {series!r}")
+        return value
+
+
+class QuoteSource:
+    URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+
+    def __init__(self, symbol: str):
+        self.symbol = symbol
+
+    def fetch(self) -> Reading:
+        response = _get(
+            self.URL.format(symbol=self.symbol),
+            params={"interval": "1d", "range": "1d"},
+            headers={"User-Agent": BROWSER_UA},
+        )
+        return self._parse(response.json())
+
+    def _parse(self, payload: dict[str, Any]) -> Reading:
+        chart = payload.get("chart")
+        if not isinstance(chart, dict):
+            raise ValueError(f"Yahoo payload for {self.symbol} has no chart object")
+        if not chart.get("result"):
+            error = chart.get("error")
+            error = error if isinstance(error, dict) else {}
+            raise ValueError(
+                f"Yahoo returned no result for {self.symbol}: "
+                f"{error.get('code', 'unknown')}: {error.get('description', 'no description')}"
+            )
+        if not isinstance(chart["result"], list):
+            raise ValueError(f"Yahoo payload for {self.symbol} has a non-list result")
+        first = chart["result"][0]
+        meta = first.get("meta") if isinstance(first, dict) else None
+        if not isinstance(meta, dict):
+            raise ValueError(f"Yahoo payload for {self.symbol} has no meta object")
+        currency = meta["currency"]
+        price = meta["regularMarketPrice"]
+        market_time = meta["regularMarketTime"]
+        if not isinstance(currency, str):
+            raise ValueError(f"Yahoo meta for {self.symbol}: bad currency {currency!r}")
+        if not isinstance(price, (int, float)):
+            raise ValueError(f"Yahoo meta for {self.symbol}: bad regularMarketPrice {price!r}")
+        try:
+            observed_at = datetime.fromtimestamp(market_time, tz=timezone.utc)
+        except (TypeError, OverflowError, OSError) as exc:
+            raise ValueError(
+                f"Yahoo meta for {self.symbol}: bad regularMarketTime {market_time!r}"
+            ) from exc
+        extra: dict[str, str] = {}
+        previous = meta.get("chartPreviousClose")
+        if previous is not None and not isinstance(previous, (int, float)):
+            raise ValueError(f"Yahoo meta for {self.symbol}: bad chartPreviousClose {previous!r}")
+        if previous is not None:
+            extra["previous_close"] = _money(previous, currency)
+            extra["change"] = _money(round(price - previous, 2), currency)
+        if meta.get("fullExchangeName"):
+            extra["exchange"] = meta["fullExchangeName"]
+        return Reading(
+            value=_money(price, currency),
+            observed_at=observed_at,
+            label=meta.get("symbol", self.symbol),
+            extra=extra,
+        )
+
+
+# Failures that mean "the source is unreachable or answered with something we can't read".
+# httpx2.HTTPError covers timeouts, connection errors and non-2xx (raise_for_status);
+# ValueError covers invalid JSON and timestamps; KeyError/IndexError cover a changed API
+# shape. Anything else (TypeError included) is a bug and must propagate.
+FETCH_ERRORS = (httpx2.HTTPError, ValueError, KeyError, IndexError)
+
+def _no_data() -> Reading:
+    """Placeholder for "never fetched". A fresh object per call, because Reading.extra is a
+    mutable dict and a shared instance would let one consumer corrupt every later fallback.
+    observed_at is the epoch so age_of reports decades rather than a recent-looking age."""
+    return Reading(value="—", observed_at=datetime.fromtimestamp(0, tz=timezone.utc), label="")
+
+
+def fetch_with_fallback(source: Source, previous: Reading | None) -> tuple[Reading, bool]:
+    """Return (reading to display, whether it is a fallback to the previous value)."""
+    try:
+        return source.fetch(), False
+    except FETCH_ERRORS:
+        return (previous if previous is not None else _no_data()), True
+
+
+def age_of(reading: Reading, now: datetime) -> timedelta:
+    """Age measured from the provider's own timestamp, never from fetch or render time."""
+    return now - reading.observed_at

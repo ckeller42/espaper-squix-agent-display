@@ -24,7 +24,9 @@
 #ifndef CONFIG_PORTAL_H
 #define CONFIG_PORTAL_H
 
-#if defined(ESP8266) 
+// ESPAPER_HOST_TEST: the native test build compiles this header against a recording stand-in for the
+// web server (test/host/shims/ESP8266WebServer.h). Not defined on any device build.
+#if defined(ESP8266) || defined(ESPAPER_HOST_TEST)
  #include <ESP8266WebServer.h>
 #elif defined(ESP32)
   #include <WebServer.h>
@@ -98,10 +100,11 @@ typedef struct DeviceData {
   uint8_t startsWithoutNtpSync;
   uint32_t lastCycleDuration;
   uint8_t actionAfterReboot;
+  uint8_t consecutiveGone;  // FORK: 410s since the last good screen (goneGuard.h)
 } DeviceData;
 
 
-#if defined(ESP8266) 
+#if defined(ESP8266) || defined(ESPAPER_HOST_TEST)
   ESP8266WebServer server (80);
 #elif defined(ESP32)
   WebServer server (80);
@@ -140,9 +143,32 @@ boolean saveConfig() {
   f.println(DEVICE_ID);
   f.print("DEVICE_SECRET=");
   f.println(DEVICE_SECRET);
+  // Only a value that differs from the compiled-in default is stored: saving the form must not freeze
+  // today's default into flash, and a stored SERVER_URL then always means "set on purpose".
+  if (!(SERVER_URL == SERVER_URL_DEFAULT)) {
+    f.print("SERVER_URL=");
+    f.println(SERVER_URL);
+    f.print("SERVER_URL_SOURCE=");
+    // A stored URL with no recorded source can only have been put there by a person.
+    f.println(SERVER_URL_SOURCE == SERVER_URL_SOURCE_DISCOVERED ? SERVER_URL_SOURCE_DISCOVERED : SERVER_URL_SOURCE_MANUAL);
+  }
   f.close();
   Serial.println("Saved values");
   return true;
+}
+
+// FORK ADDITION (Task 4): persist a URL found by discovery, so the next wake starts there and does
+// not search again. Refuses, and changes nothing, if the stored URL was entered by hand: a person who
+// typed an address is exercising control (usually while debugging) and must not be silently overridden.
+// Call it only for a URL that has just served a screen (serverTrust.h).
+boolean saveDiscoveredServerUrl(String url) {
+  if (SERVER_URL_SOURCE == SERVER_URL_SOURCE_MANUAL) {
+    Serial.println(F("Not storing the discovered server: the stored URL was entered by hand"));
+    return false;
+  }
+  SERVER_URL = url;
+  SERVER_URL_SOURCE = (url == SERVER_URL_DEFAULT) ? "" : SERVER_URL_SOURCE_DISCOVERED;
+  return saveConfig();
 }
 
 boolean loadConfig() {
@@ -151,6 +177,8 @@ boolean loadConfig() {
     Serial.println("Failed to open config file");
     return false;
   }
+  boolean urlStored = false;
+  String storedSource = "";
   while (f.available()) {
     String key = f.readStringUntil('=');
     String value = f.readStringUntil('\r');
@@ -177,11 +205,26 @@ boolean loadConfig() {
     if (key == "DEVICE_SECRET" || key == "DEVICE_KEY") { // support pre-V011 clients
       DEVICE_SECRET = value;
     }
+    if (key == "SERVER_URL" && value != "") { // empty keeps the compiled-in default
+      SERVER_URL = value;
+      urlStored = true;
+    }
+    if (key == "SERVER_URL_SOURCE") {
+      storedSource = value;
+    }
     // break infinite loop if file is present but somehow empty or corrupt
     if (key == "" && value == "") {
       Serial.println(F("Config file available on the flash filesystem but at least one line with empty key and value found. Exiting read loop."));
       break;
     }
+  }
+  // FORK CHANGE (Task 4): only an explicit "discovered" lets discovery replace a stored URL again. A
+  // URL with a missing or unrecognised source is treated as hand-entered: Task 2's portal wrote
+  // those, and guessing "discovered" would let discovery override a person.
+  if (urlStored) {
+    SERVER_URL_SOURCE = (storedSource == SERVER_URL_SOURCE_DISCOVERED) ? SERVER_URL_SOURCE_DISCOVERED : SERVER_URL_SOURCE_MANUAL;
+  } else {
+    SERVER_URL_SOURCE = ""; // no stored URL: the compiled default, which discovery may replace
   }
   if (WIFI_SSID == "" || WIFI_PASS == "" || TIMEZONE == "") {
     Serial.println("At least one configuration property not yet defined");
@@ -205,13 +248,18 @@ void loadDeviceData(DeviceData *deviceData) {
     deviceData->startsWithoutNtpSync = 0;
     deviceData->lastCycleDuration = 0;
     deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPDATE_SCREEN;
+    deviceData->consecutiveGone = 0;
     return;
   }
+  deviceData->consecutiveGone = 0;  // absent in files written before this key existed
   while (f.available()) {
     String key = f.readStringUntil('=');
     String value = f.readStringUntil('\r');
     f.read();
     Serial.println(key + " = [" + value + "]");
+    if (key == "CONSECUTIVE_GONE") {
+      deviceData->consecutiveGone = value.toInt();
+    }
     if (key == "TOTAL_DEVICE_STARTS") {
       deviceData->totalDeviceStarts = value.toInt();
     }
@@ -259,6 +307,8 @@ void saveDeviceData(DeviceData* deviceData) {
   f.println(deviceData->lastCycleDuration);
   f.print(F("ACTION_AFTER_REBOOT="));
   f.println(deviceData->actionAfterReboot);
+  f.print(F("CONSECUTIVE_GONE="));
+  f.println(deviceData->consecutiveGone);
   f.close();
   Serial.println(F("Saved values in data file."));
 }
@@ -337,6 +387,7 @@ void handleRoot() {
   server.sendContent("</select>");
   server.sendContent("<br><br>");
   server.sendContent(getFormField("ntpServers", "NTP Servers", "300", NTP_SERVERS, ""));
+  server.sendContent(getFormField("serverUrl", "ESPaper Server URL", "200", SERVER_URL, ""));
   server.sendContent(FPSTR(HTTP_FORM_END));
   server.sendContent(FPSTR(HTTP_END));
   server.sendContent("");
@@ -361,6 +412,25 @@ void handleReset() {
   ESP.restart();  
 }
 
+// FORK CHANGE (Task 4): one rule for a server URL a person submitted, shared by the web form and
+// the serial console so the two channels cannot drift apart. The form is pre-filled with the
+// current URL, so saving e.g. a new WiFi password re-posts a discovered URL unchanged. That is not
+// a person choosing it: keep its source. Anything else submitted is a person exercising control,
+// and from then on discovery leaves it alone.
+void setServerUrlFromInput(String submittedUrl) {
+  if (submittedUrl == "") {
+    submittedUrl = SERVER_URL_DEFAULT; // a blanked field means "use the default", never "no server"
+  }
+  if (submittedUrl == SERVER_URL && SERVER_URL_SOURCE == SERVER_URL_SOURCE_DISCOVERED) {
+    // unchanged discovered URL: source stays "discovered"
+  } else if (submittedUrl == SERVER_URL_DEFAULT) {
+    SERVER_URL_SOURCE = "";
+  } else {
+    SERVER_URL_SOURCE = SERVER_URL_SOURCE_MANUAL;
+  }
+  SERVER_URL = submittedUrl;
+}
+
 void handleSave() {
   Serial.println("Handling 'save' request");
   WIFI_SSID = server.arg("ssid");
@@ -368,11 +438,12 @@ void handleSave() {
   UPDATE_INTERVAL_MINS = server.arg("updateIntervalMins").toInt();
   TIMEZONE = server.arg("timeZone");
   NTP_SERVERS = server.arg("ntpServers");
+  setServerUrlFromInput(server.arg("serverUrl"));
   Serial.println(WIFI_SSID);
-  Serial.println(WIFI_PASS);
   Serial.println(UPDATE_INTERVAL_MINS);
   Serial.println(TIMEZONE);
   Serial.println(NTP_SERVERS);
+  Serial.println(SERVER_URL);
   saveConfig();
   sendRedirectToRoot();
 }
@@ -424,6 +495,31 @@ void registerServerCallbackHandlers() {
   server.on("/delete", handleDelete);
   server.on("/reset", handleReset);
   server.onNotFound(handleNotFound);  
+}
+
+#include "serialconfig.h"  // needs saveConfig() and setServerUrlFromInput(), defined above
+
+// Read one line from the serial console, if a whole one has arrived, and act on it. Called from the
+// config portal's loop beside server.handleClient(), so the two channels are equally live and a
+// person can use whichever one reaches the device.
+void pollSerialConfig() {
+  static String pending = "";
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c != '\n') {
+      pending += c;
+      continue;
+    }
+    SerialConfigOutcome outcome = applySerialConfigCommand(pending);
+    pending = "";
+    if (outcome.reply != "") {
+      Serial.println(outcome.reply);
+    }
+    if (outcome.restart) {
+      Serial.flush();
+      ESP.restart();
+    }
+  }
 }
 
 String getJoinWifiMessage() {
@@ -485,8 +581,10 @@ void startConfigPortal(MiniGrafx *gfx) {
   server.begin();
   Serial.println("HTTP server started");
 
+  Serial.println(F("Serial configuration is live too -- type 'help' for the commands"));
   while (true) {
     server.handleClient();
+    pollSerialConfig();
     yield();
   }
 }

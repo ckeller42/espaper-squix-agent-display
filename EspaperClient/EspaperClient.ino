@@ -39,6 +39,9 @@
 #endif
 #include "configportal.h"
 #include "EspaperParser.h"
+#include "serverTrust.h"
+#include "discovery.h"
+#include "goneGuard.h"
 
 #define MINI_BLACK 0
 #define MINI_WHITE 1
@@ -86,6 +89,18 @@ void showMessage(String message) {
   gfx.setTextAlignment(TEXT_ALIGN_CENTER);
   gfx.setFont(ArialMT_Plain_16);
   gfx.drawStringMaxWidth(gfx.getWidth() / 2, STD_MESSAGE_Y_POSITION, gfx.getWidth() * MAX_TEXT_WIDTH_FACTOR, message);
+  gfx.commit();
+  gfx.freeBuffer();
+}
+
+// FORK ADDITION: a longer, smaller-print message than showMessage(), for the server-unreachable screen.
+void showMessageSmall(String message) {
+  gfx.init();
+  gfx.fillBuffer(1);
+  gfx.setColor(MINI_BLACK);
+  gfx.setTextAlignment(TEXT_ALIGN_LEFT);
+  gfx.setFont(ArialMT_Plain_10);
+  gfx.drawStringMaxWidth(4, 4, gfx.getWidth() - 8, message);
   gfx.commit();
   gfx.freeBuffer();
 }
@@ -143,9 +158,10 @@ String buildOptionalHeaderFields(DeviceData *deviceData) {
 void formatFileSystem() {
   showMessage(String(F("File System error.\nFormatting File System\nPlease wait...")));
   Serial.println(F("Formating FS.."));
-  DEVICE_FS.format();
-  Serial.println(F("Done Formatting"));
-  DEVICE_FS.begin();
+  bool formatted = DEVICE_FS.format();
+  Serial.printf_P(PSTR("Done Formatting (format returned %d)\n"), formatted);
+  bool remounted = DEVICE_FS.begin();
+  Serial.printf_P(PSTR("Remount after format: %d\n"), remounted);
   showMessage(String(F("Done formatting...")));
 }
 
@@ -177,19 +193,61 @@ void startDeviceSleep(uint32_t sleepSeconds, uint32_t sleepUntilEpoch) {
 }
 
 EspaperParser::ResourceResponse fetchAndDrawScreen(EspaperParser *parser, DeviceData *deviceData) {
-  EspaperParser::ResourceResponse response = parser->getAndDrawScreen(SERVER_API_DEVICES_PATH + "/" + DEVICE_ID + "/screen", buildOptionalHeaderFields(deviceData), &BoardClass::sleepWifi);
-  if (response.httpCode == 410) {
-    saveDeviceRegistration("", "");
-    ESP.restart();
-  }
-  if (response.httpCode == HTTP_INTERNAL_CODE_UPGRADE_CLIENT) {
-    Serial.println(F("Firmware upgrade requested by server"));
-    deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPGRADE_FIRMWARE;
-    saveDeviceData(deviceData);
-    ESP.restart();
-  } else {
-    deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPDATE_SCREEN;
-  }
+  EspaperParser::ResourceResponse response;
+  // FORK CHANGE: the one screen fetch doubles as the check that SERVER_URL is an ESPaper server
+  // (see serverTrust.h). No extra request in the steady state; discovery (discovery.h) runs only if
+  // the stored URL is rejected, and never replaces a URL that was entered by hand.
+  bool urlIsManual = (SERVER_URL_SOURCE == SERVER_URL_SOURCE_MANUAL);
+  String storedUrl = SERVER_URL;
+  ScreenFetch fetched = fetchScreenOrDiscoverOrReport(parser, [&]() {
+    response = parser->getAndDrawScreen(SERVER_API_DEVICES_PATH + "/" + DEVICE_ID + "/screen", buildOptionalHeaderFields(deviceData), &BoardClass::sleepWifi);
+    // 410 and update requests are the server speaking: handled (and restarted on) before any judgement.
+    if (response.httpCode == 410) {
+      // FORK CHANGE (goneGuard.h): the first 410 restarts at once, as upstream; a repeat sleeps first
+      // so a server that keeps answering 410 cannot hold the device in a reboot loop.
+      bool sleepFirst = recordGoneShouldSleep(deviceData);
+      saveDeviceData(deviceData);  // before restart/sleep, or the count is lost. One write, 410 path only.
+      saveDeviceRegistration("", "");
+      if (sleepFirst) {
+        Serial.println(F("Repeated 410 from server; sleeping instead of restarting"));
+        epd.Sleep();
+        Board.deepSleep(GONE_RETRY_SLEEP_SECONDS);
+        // ESP.deepSleep() takes effect asynchronously on the ESP8266; never fall through to the restart.
+        while (true) {
+          delay(100);
+        }
+      }
+      ESP.restart();
+    }
+    if (response.httpCode == 200) {
+      clearGoneCount(deviceData);  // persisted by setup()'s saveDeviceData() at the end of this boot
+    }
+    if (response.httpCode == HTTP_INTERNAL_CODE_UPGRADE_CLIENT) {
+      Serial.println(F("Firmware upgrade requested by server"));
+      deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPGRADE_FIRMWARE;
+      saveDeviceData(deviceData);
+      ESP.restart();
+    }
+    return response;
+  }, urlIsManual, []() {
+    Serial.printf_P(PSTR("Stored server URL %s did not serve an ESPaper screen; searching\n"), SERVER_URL.c_str());
+    // getAndDrawScreen() switched the radio off when its download finished; mDNS needs it back.
+    if (!Board.connectWifi(WIFI_SSID, WIFI_PASS)) {
+      return String("");
+    }
+    return discoverServer();
+  }, [parser](const String &url) {
+    parser->setBaseUrl(url);
+  }, [](const String &url) {
+    // Only reached for a URL that has just served a screen. Writes flash, so not in the steady state.
+    return saveDiscoveredServerUrl(url);
+  }, storedUrl, [](const String &message) {
+    // Both the stored URL and discovery failed (or the stored URL is hand-entered and left alone).
+    // Say so on the panel: a blank or stale panel looks exactly like a flat battery. This is the ONLY
+    // screen a failed wake draws: the wrapper told the parser to skip its generic one.
+    showMessageSmall(message);
+  });
+  deviceData->actionAfterReboot = ACTION_AFTER_REBOOT_UPDATE_SCREEN;
   return response;
 }
 

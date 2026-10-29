@@ -115,7 +115,8 @@ EspaperParser::DeviceIdAndSecret EspaperParser::registerDevice(String requestPat
 
   }
 
-  if (!client->available() == 0) {
+  // Local fix: was `!client->available() == 0`, which parses as `(!available) == 0` and fires when data IS available.
+  if (client->available() == 0) {
     Serial.println("Client disconnected before body parsing");
   }
   delete client;
@@ -132,6 +133,29 @@ EspaperParser::ResourceResponse EspaperParser::getAndDrawScreen(String requestPa
     // In case of update return before the framebuffer is allocated, since it fragments the 
     // memory too much
     Serial.println(F("Update requested"));
+    return response;
+  }
+
+  // FORK CHANGE: judge the fetch we already made instead of probing. A 200 that is not exactly one
+  // payload came from some other device (e.g. a reused DHCP address). Return before the framebuffer
+  // is allocated, like the update case above, rather than draw another device's bytes as a screen.
+  if (response.httpCode == 200 && response.payloadBytes != ESPAPER_PAYLOAD_SIZE) {
+    Serial.printf("Server sent %u bytes, a screen is %d: not an ESPaper server\n", (unsigned) response.payloadBytes, ESPAPER_PAYLOAD_SIZE);
+    response.httpCode = HTTP_INTERNAL_CODE_NOT_ESPAPER;
+    response.sleepSeconds = 60;
+    response.sleepUntilEpoch = 60;
+    return response;
+  }
+
+  // FORK CHANGE (double refresh): when the caller has promised its own failure screen, a fetch that
+  // failed (not 200, and not the 410 whose restart follows) must not spend an e-ink refresh on the
+  // generic message below -- it would be replaced at once, or never read at all. Return before the
+  // framebuffer is allocated. The 60 s retry is exactly what the -2 and default cases set below.
+  // Never defer without that promise: with no caller screen this path would draw nothing.
+  if (deferFailureScreen && response.httpCode != 200 && response.httpCode != 410) {
+    Serial.println(F("Fetch failed; the caller draws the failure screen"));
+    response.sleepSeconds = 60;
+    response.sleepUntilEpoch = 60;
     return response;
   }
 
@@ -253,6 +277,7 @@ EspaperParser::ResourceResponse EspaperParser::downloadResource(Url url, String 
   response.httpCode = 0;
   response.sleepSeconds = 0;
   response.sleepUntilEpoch = 0;
+  response.payloadBytes = 0;
 
   Serial.printf(PSTR("Downloading resource from:\n\tScheme: %s\n\tHost: %s\n\tPort: %d\n\tPath: %s\n"), url.protocol.c_str(), url.host.c_str(), url.port, url.path.c_str());
 
@@ -331,7 +356,8 @@ EspaperParser::ResourceResponse EspaperParser::downloadResource(Url url, String 
 
   }
 
-  if (!client->available() == 0) {
+  // Local fix: was `!client->available() == 0`, which parses as `(!available) == 0` and fires when data IS available.
+  if (client->available() == 0) {
     Serial.println("Client disconnected before body parsing");
   }
   Serial.println("Processing body");
@@ -375,7 +401,9 @@ EspaperParser::ResourceResponse EspaperParser::downloadResource(Url url, String 
       file.close();
       client->stop();
       delete client;
-      Serial.printf("Downloaded file %s with size %d", fileName.c_str(), downloadedBytes);
+      response.payloadBytes = downloadedBytes;
+      // Local fix: downloadedBytes is a long, so %ld (%d is a width mismatch off the 32-bit device).
+      Serial.printf("Downloaded file %s with size %ld", fileName.c_str(), downloadedBytes);
       Serial.println();
       Serial.print("[HTTP] connection closed or file end.\n");
       return response;
@@ -424,7 +452,8 @@ void EspaperParser::updateFirmware(String requestPath) {
       break;
 
     default:
-      Serial.printf_P(PSTR("%s is an unexpected return value. Did the library change?\n"), ret);
+      // Local fix: ret is an enum, not a char*; %s dereferenced it as a pointer. Print it as an integer.
+      Serial.printf_P(PSTR("%d is an unexpected return value. Did the library change?\n"), (int)ret);
       break;  
   }
  
