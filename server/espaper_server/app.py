@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import html
 import io
+import logging
 import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -18,6 +19,44 @@ from espaper_server.recipe import Panel, Recipe
 from espaper_server.render import render, render_ascii
 from espaper_server.sources import Reading
 from espaper_server.store import Store
+
+log = logging.getLogger(__name__)
+
+DEFAULT_REFRESH_SECONDS = 300.0
+
+
+def refresh_seconds_from_env() -> float | None:
+    """How often to replay the approved recipe. ESPAPER_REFRESH_SECONDS=0 turns the timer off;
+    an unreadable value falls back to the default rather than stopping the server from booting,
+    because a stale screen is a far smaller failure than no server."""
+    raw = os.environ.get("ESPAPER_REFRESH_SECONDS")
+    if raw is None:
+        return DEFAULT_REFRESH_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError:
+        log.error("ESPAPER_REFRESH_SECONDS=%r is not a number; using %s", raw, DEFAULT_REFRESH_SECONDS)
+        return DEFAULT_REFRESH_SECONDS
+    if seconds <= 0:
+        return None
+    return seconds
+
+
+async def refresh_loop(store, seconds: float) -> None:
+    """Redraw the approved screen every `seconds`, forever.
+
+    It sleeps first: approve() has just drawn, so there is nothing to redo at startup. Each
+    redraw runs in a thread because fetching sources and rendering are blocking work, and the
+    server must stay able to answer a device mid-draw. One failed cycle is logged and skipped --
+    a source being down must not end every later refresh.
+    """
+    while True:
+        await asyncio.sleep(seconds)
+        try:
+            await asyncio.to_thread(store.refresh)
+        except Exception:  # noqa: BLE001 -- a refresh may fail any way a network can
+            log.exception("refresh failed; the panel keeps the screen it has")
+
 
 _WAITING_RECIPE = Recipe(
     timezone="UTC",
@@ -43,7 +82,12 @@ class Registration(BaseModel):
     timeZone: str = Field(min_length=1)
 
 
-def create_app(store: Store, advertiser: Advertiser | None = None) -> FastAPI:
+def create_app(
+    store: Store, advertiser: Advertiser | None = None, refresh_seconds: float | None = -1.0
+) -> FastAPI:
+    """refresh_seconds defaults to the sentinel -1, meaning "ask the environment"; pass None to
+    run without the timer (the tests do) or a number to pin it."""
+
     @contextlib.asynccontextmanager
     async def lifespan(_app):
         # Advertising is optional and never fatal: Advertiser logs its own failures. It runs in a
@@ -51,9 +95,15 @@ def create_app(store: Store, advertiser: Advertiser | None = None) -> FastAPI:
         adv = advertiser or advertiser_from_env()
         if adv is not None:
             await asyncio.to_thread(adv.start)
+        every = refresh_seconds_from_env() if refresh_seconds == -1.0 else refresh_seconds
+        refresher = asyncio.create_task(refresh_loop(store, every)) if every else None
         try:
             yield
         finally:
+            if refresher is not None:
+                refresher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await refresher
             if adv is not None:
                 await asyncio.to_thread(adv.stop)
 

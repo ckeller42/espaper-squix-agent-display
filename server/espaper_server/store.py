@@ -9,8 +9,8 @@
     root/screen.bin             the payload served to devices
     root/rendered_at            when screen.bin was stored (ISO time)
 
-The store holds bytes. approve() is the only place that composes a screen, and it runs when a
-person approves a recipe, never while a device is waiting for a response.
+The store holds bytes. _draw() is the only place that composes a screen; approve() calls it for
+a person, refresh() calls it on a timer. Neither runs while a device is waiting for a response.
 """
 
 import hashlib
@@ -149,9 +149,9 @@ class Store:
         self._write("recipe.json", recipe.to_json())
         (self.root / "approved").unlink(missing_ok=True)
 
-    def approve(self, recipe: Recipe) -> None:
+    def _draw(self, recipe: Recipe) -> None:
         """Fetch each panel's source once, render, and store the payload. A source that is down
-        falls back to its last good reading, shown with its age, rather than failing the approval."""
+        falls back to its last good reading, shown with its age, rather than failing the draw."""
         remembered = self._load_readings()
         readings, stale = [], []
         for panel in recipe.panels:
@@ -166,8 +166,25 @@ class Store:
         payload = pack_screen(render(recipe, readings, self._clock(), stale=stale))
         self._save_readings(remembered)
         self.put_payload(payload)
+
+    def approve(self, recipe: Recipe) -> None:
+        """Draw the recipe and make it the one devices receive."""
+        self._draw(recipe)
         self._write("recipe.json", recipe.to_json())
         self._write("approved", "")
+
+    def refresh(self) -> bool:
+        """Replay the approved recipe with fresh readings; True when a screen was drawn.
+
+        A refresh proposes nothing and needs no approval -- it only replaces the numbers in a
+        layout the owner already accepted. Without it the server draws once, at approval, and
+        every later device fetch gets those same bytes however long the device keeps waking.
+        """
+        recipe = self.pending_recipe()
+        if recipe is None or not self.is_approved():
+            return False
+        self._draw(recipe)
+        return True
 
     def _load_readings(self) -> dict[str, Reading]:
         path = self.root / "readings.json"
