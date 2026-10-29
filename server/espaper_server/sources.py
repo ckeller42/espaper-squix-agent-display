@@ -1,5 +1,7 @@
 """Data sources behind one interface. Each fetch returns a formatted Reading."""
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
@@ -12,6 +14,36 @@ BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
+
+# Yahoo answers an unauthenticated chart request with 429 intermittently - three identical
+# cookieless requests seconds apart returned 200, 429, 200 - so the failure is flaky rather
+# than a missing session, and a bounded retry is the fix, not a cookie/crumb handshake.
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# Yahoo fails roughly half of all cold requests (measured: 5 curl calls 200/429/429/200/429,
+# 5 httpx2 calls 200/200/200/429/429), so three attempts would still leave a blank panel one
+# time in eight. Five attempts put that near 3% at a worst case of 7.5 s of backoff, which a
+# once-per-cycle approve can afford.
+RETRY_ATTEMPTS = 5
+RETRY_BACKOFF = 0.5  # seconds before the first retry, doubled for each one after
+
+
+def _get(
+    url: str,
+    *,
+    params: dict[str, Any],
+    headers: dict[str, str] | None = None,
+    get: Callable[..., httpx2.Response] = httpx2.get,
+    sleep: Callable[[float], None] = time.sleep,
+) -> httpx2.Response:
+    """GET url, retrying the statuses that mean "ask again later". Raises on the last attempt,
+    so a caller's raise_for_status contract is unchanged. get and sleep are injectable for tests."""
+    for attempt in range(RETRY_ATTEMPTS):
+        response = get(url, params=params, headers=headers or {}, timeout=TIMEOUT)
+        if response.status_code not in RETRY_STATUSES or attempt == RETRY_ATTEMPTS - 1:
+            break
+        sleep(RETRY_BACKOFF * 2**attempt)
+    response.raise_for_status()
+    return response
 
 
 @dataclass(frozen=True)
@@ -41,7 +73,7 @@ class WeatherSource:
         self.timezone = timezone
 
     def fetch(self) -> Reading:
-        response = httpx2.get(
+        response = _get(
             self.URL,
             params={
                 "latitude": self.latitude,
@@ -51,9 +83,7 @@ class WeatherSource:
                 "timezone": self.timezone,
                 "forecast_days": 1,
             },
-            timeout=TIMEOUT,
         )
-        response.raise_for_status()
         return self._parse(response.json())
 
     def _parse(self, payload: dict[str, Any]) -> Reading:
@@ -108,13 +138,11 @@ class QuoteSource:
         self.symbol = symbol
 
     def fetch(self) -> Reading:
-        response = httpx2.get(
+        response = _get(
             self.URL.format(symbol=self.symbol),
             params={"interval": "1d", "range": "1d"},
             headers={"User-Agent": BROWSER_UA},
-            timeout=TIMEOUT,
         )
-        response.raise_for_status()
         return self._parse(response.json())
 
     def _parse(self, payload: dict[str, Any]) -> Reading:

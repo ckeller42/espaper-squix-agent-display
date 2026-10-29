@@ -6,9 +6,12 @@ import httpx2
 import pytest
 
 from espaper_server.sources import (
+    RETRY_ATTEMPTS,
+    RETRY_BACKOFF,
     QuoteSource,
     Reading,
     WeatherSource,
+    _get,
     age_of,
     fetch_with_fallback,
 )
@@ -338,3 +341,62 @@ def test_real_httpx2_failures_are_covered_by_fetch_errors():
     response = httpx2.Response(503, request=httpx2.Request("GET", "http://example.invalid/"))
     with pytest.raises(FETCH_ERRORS):
         response.raise_for_status()
+
+
+# --- transient-failure retry -------------------------------------------------
+# Yahoo answers an unauthenticated chart request with 429 intermittently: three identical
+# cookieless requests on 2026-10-29 returned 200, 429, 200. Without a retry a single 429
+# on a cold server (no readings.json yet) renders the panel as "—" for the whole cycle.
+
+
+def _response(status: int) -> httpx2.Response:
+    return httpx2.Response(status, request=httpx2.Request("GET", "https://example.test/"), json={})
+
+
+def test_get_retries_a_transient_status_then_succeeds():
+    statuses = [429, 200]
+    slept: list[float] = []
+    response = _get(
+        "https://example.test/",
+        params={},
+        get=lambda *a, **k: _response(statuses.pop(0)),
+        sleep=slept.append,
+    )
+    assert response.status_code == 200
+    assert slept == [RETRY_BACKOFF]
+
+
+def test_get_gives_up_after_the_attempt_cap():
+    calls = []
+
+    def always_429(*a, **k):
+        calls.append(1)
+        return _response(429)
+
+    with pytest.raises(httpx2.HTTPStatusError):
+        _get("https://example.test/", params={}, get=always_429, sleep=lambda _: None)
+    assert len(calls) == RETRY_ATTEMPTS
+
+
+def test_get_does_not_retry_a_permanent_status():
+    calls = []
+
+    def always_404(*a, **k):
+        calls.append(1)
+        return _response(404)
+
+    with pytest.raises(httpx2.HTTPStatusError):
+        _get("https://example.test/", params={}, get=always_404, sleep=lambda _: None)
+    assert len(calls) == 1
+
+
+def test_get_backs_off_exponentially():
+    slept: list[float] = []
+    statuses = [429, 429, 200]
+    _get(
+        "https://example.test/",
+        params={},
+        get=lambda *a, **k: _response(statuses.pop(0)),
+        sleep=slept.append,
+    )
+    assert slept == [RETRY_BACKOFF, RETRY_BACKOFF * 2]
