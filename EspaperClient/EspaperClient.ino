@@ -158,9 +158,10 @@ String buildOptionalHeaderFields(DeviceData *deviceData) {
 void formatFileSystem() {
   showMessage(String(F("File System error.\nFormatting File System\nPlease wait...")));
   Serial.println(F("Formating FS.."));
-  DEVICE_FS.format();
-  Serial.println(F("Done Formatting"));
-  DEVICE_FS.begin();
+  bool formatted = DEVICE_FS.format();
+  Serial.printf_P(PSTR("Done Formatting (format returned %d)\n"), formatted);
+  bool remounted = DEVICE_FS.begin();
+  Serial.printf_P(PSTR("Remount after format: %d\n"), remounted);
   showMessage(String(F("Done formatting...")));
 }
 

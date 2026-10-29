@@ -84,6 +84,26 @@ else
     fi
 fi
 
+step "filesystem region"
+# A build can report SUCCESS and still link a zero-byte filesystem, which the
+# device survives by reformatting on every boot and storing nothing. That cost
+# a full hardware debugging session once; a linker symbol is the only place it
+# shows, so it is checked here rather than discovered on a panel.
+if (( ! have_build )); then
+    skipped+=("filesystem region: no build output")
+    echo "no build output to check -- skipped" >&2
+else
+    elf="$(ls -t .pio/build/*/firmware.elf 2>/dev/null | head -1)"
+    if [[ -z "$elf" ]]; then
+        skipped+=("filesystem region: no firmware.elf")
+        echo "no firmware.elf found -- skipped" >&2
+    elif python3 scripts/check-fs-region.py "$elf"; then
+        ran+=("filesystem region")
+    else
+        fail=1
+    fi
+fi
+
 # The verdict names what ran. A skipped check is not a pass, and a run in which
 # nothing could execute is inconclusive, never green.
 join() { local IFS=,; echo "$*"; }

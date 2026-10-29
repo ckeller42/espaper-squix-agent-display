@@ -61,6 +61,16 @@ device renders screens pushed by an agent via a server on the LAN.
 - **Warnings are fixed, not tolerated** — CI fails the build if any appear.
   `-Werror` is deliberately not used (it would also fail on framework headers);
   the gate greps the build output we own.
+- **A bare `[esp8266]` section is inherited by nothing.** Every `[env:...]` hand-copies
+  the options it wants with `${esp8266.x}`. `board_build.ldscript` sat in that
+  section unreferenced, so the linker used the board default -- a 2MB layout with a
+  **zero-byte filesystem**. The build reported SUCCESS, the ldscript line read
+  correctly, and the device reformatted its filesystem on every boot and could store
+  nothing, so it never left the setup portal. `scripts/check-fs-region.py` reads
+  `_FS_start`/`_FS_end` out of the ELF and the gate fails on an empty region; adding a
+  new `board_build.*` option means adding it to all seven esp8266 envs too.
+  (The toolchain's `nm` is x86_64-only and these Macs have no Rosetta, which is why
+  that script parses the ELF itself.)
 - **LittleFS, not SPIFFS.** `DEVICE_FS` in `EspaperClient/settings.h` selects it.
   The formats are incompatible: a half-migration means the app writes files the
   renderer cannot find. `lib/MiniGrafx` is vendored *solely* to carry the same
