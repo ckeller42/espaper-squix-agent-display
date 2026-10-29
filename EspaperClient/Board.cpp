@@ -51,10 +51,14 @@ void BoardClass::deepSleep(uint64_t sleepSeconds) {
         uint64_t maxSleepMicroSeconds = ESP.deepSleepMax() * 0.8;
 
         uint64_t calculatedSleepMicroSeconds = maxSleepMicroSeconds < sleepMicroSeconds ? maxSleepMicroSeconds : sleepMicroSeconds;
-        Serial.printf_P(PSTR("Going to sleep for: %d[s]\n"),  calculatedSleepMicroSeconds / 1000000);
+        // Narrowed before printing: %d takes 32 bits of a 64-bit vararg, so this line used to
+        // report a number unrelated to the sleep it was announcing. A sleep in seconds cannot
+        // overflow uint32_t here -- deepSleepMax() caps it well below an hour and a half.
+        uint32_t calculatedSleepSeconds = (uint32_t) (calculatedSleepMicroSeconds / 1000000);
+        Serial.printf_P(PSTR("Going to sleep for: %u[s]\n"),  calculatedSleepSeconds);
         ESP.deepSleep(calculatedSleepMicroSeconds, WAKE_RF_DISABLED);
     #elif defined(ESP32)
-        Serial.printf_P(PSTR("Going to sleep for: %d[s]\n"),  sleepSeconds);
+        Serial.printf_P(PSTR("Going to sleep for: %u[s]\n"),  (uint32_t) sleepSeconds);
         esp_sleep_enable_timer_wakeup(sleepSeconds * 1000000);
         esp_deep_sleep_start();
     #endif
