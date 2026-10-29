@@ -176,6 +176,12 @@ def test_sleep_seconds_defaults_and_reads_config(tmp_path):
     assert store.sleep_seconds() == 120  # picked up without a restart
 
 
+def test_the_default_sleep_is_a_few_minutes_as_the_design_promises():
+    # The device sleeps for whatever this says, so it caps how fresh the panel can ever be,
+    # however often the server redraws. An hour here left a panel an hour stale.
+    assert 60 <= DEFAULT_SLEEP_SECONDS <= 900, "the design says 'every few minutes', not hourly"
+
+
 @pytest.mark.parametrize("bad", ['{"sleep_seconds": 0}', '{"sleep_seconds": "x"}', "not json"])
 def test_bad_sleep_config_is_an_error_not_a_silent_default(tmp_path, bad):
     (tmp_path / "config.json").write_text(bad)
