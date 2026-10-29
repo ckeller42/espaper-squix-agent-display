@@ -29,10 +29,10 @@ def build_waiting_payload(now) -> bytes:
     """Rendered once at startup, before any request. Devices register and ask for a screen
     before any recipe exists; this is what they get until one is approved."""
     reading = Reading(
-        value="Waiting for a screen",
+        value="Warte auf Inhalt",
         observed_at=now,
         label="ESPaper",
-        extra={"hint": "approve a recipe to begin"},
+        extra={"hint": "Rezept freigeben, dann geht es los"},
     )
     return pack_screen(render(_WAITING_RECIPE, [reading], now))
 

@@ -59,12 +59,14 @@ def _percent(change: str, base: str) -> str | None:
 
 
 def _age_text(age: timedelta) -> str:
+    """German, like everything else the panel shows. Abbreviated because this sits beside a
+    clock time on a 150-pixel-wide panel: "vor 3 Min." fits where "vor 3 Minuten" does not."""
     minutes = max(int(age.total_seconds() // 60), 0)
     if minutes < 60:
-        return f"{minutes}m ago"
+        return f"vor {minutes} Min."
     if minutes < 48 * 60:
-        return f"{minutes // 60}h ago"
-    return f"{minutes // (24 * 60)}d ago"
+        return f"vor {minutes // 60} Std."
+    return f"vor {minutes // (24 * 60)} Tg."
 
 
 def _fields(panel: Panel, reading: Reading, tz: ZoneInfo, now: datetime, stale: bool) -> _Fields:

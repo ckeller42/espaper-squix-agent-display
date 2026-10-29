@@ -114,15 +114,15 @@ def test_no_data_placeholder_renders_without_an_age(drawn):
     nothing = Reading(value="—", observed_at=epoch, label="")
     text = drawn(RECIPE, [nothing, READINGS[1]], FIXED_NOW, stale=[True, False])
     assert "—" in text
-    assert "ago" not in text and "1970" not in text and "56" not in text
+    assert "vor " not in text and "1970" not in text and "56" not in text
 
 
 def test_stale_reading_shows_its_age_from_the_providers_timestamp(drawn):
-    assert "19:02 CET · 3m ago" in drawn(RECIPE, READINGS, FIXED_NOW, stale=[False, True])
+    assert "19:02 CET · vor 3 Min." in drawn(RECIPE, READINGS, FIXED_NOW, stale=[False, True])
 
 
 def test_fresh_reading_shows_no_age(drawn):
-    assert "ago" not in drawn(RECIPE, READINGS, FIXED_NOW)
+    assert "vor " not in drawn(RECIPE, READINGS, FIXED_NOW)
 
 
 def test_missing_extra_key_drops_the_line_instead_of_printing_blanks(drawn):
