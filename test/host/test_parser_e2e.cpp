@@ -34,7 +34,12 @@ static void startServer() {
     dup2(in[0], STDIN_FILENO);
     close(out[0]); close(out[1]); close(in[0]); close(in[1]);
     const char *py = getenv("ESPAPER_TEST_PYTHON");
-    execl(py ? py : "server/.venv/bin/python", "python", "test/host/live_server.py", (char *)nullptr);
+    if (py == nullptr) py = "server/.venv/bin/python";
+    // argv[0] must be the interpreter's own path, not a bare "python": on Linux CPython derives
+    // sys.prefix from it, so a bare name resolves to the system interpreter and the venv's
+    // packages vanish (ModuleNotFoundError: fastapi). macOS asks the kernel for the executable
+    // path instead and so never noticed.
+    execl(py, py, "test/host/live_server.py", (char *)nullptr);
     perror("exec server");
     _exit(127);
   }
@@ -42,7 +47,12 @@ static void startServer() {
   serverStdin = in[1];
   FILE *f = fdopen(out[0], "r");
   if (!f || fscanf(f, "%d %ld %ld", &serverPort, &serverSleepSeconds, &serverSleepUntil) != 3) {
-    fprintf(stderr, "live server did not report a port\n");
+    // Say why, not just that. CI reported only "Program received signal SIGHUP" for this path,
+    // which named neither the server nor the reason and cost a full debugging round trip.
+    int status = 0;
+    if (serverPid > 0) waitpid(serverPid, &status, 0);
+    fprintf(stderr, "live server did not report a port (child exit status %d); "
+                    "its stderr is above\n", WIFEXITED(status) ? WEXITSTATUS(status) : -1);
     exit(1);
   }
 }
