@@ -51,13 +51,16 @@ device renders screens pushed by an agent via a server on the LAN.
   We stay on `eagle.flash.2m512.ld`; `--flash-size` in `flash.sh` must match the
   ldscript, not the physical chip, or the filesystem lands at the wrong offset.
 - Free heap after init: ~45.9 KB. That is the real budget for new features.
-- **The wake cycle is ~12 minutes, whatever the server asks for.** `Board::deepSleep`
-  clamps to `ESP.deepSleepMax() * 0.8`, which on this kit lands near 720 s, so a
-  server-sent `X-ESPAPER-SLEEP-SECONDS: 3600` still wakes the device four times an
-  hour (measured: fetches at 13:56, 14:09, 14:22). Until 39bce7a the log hid this --
-  it printed a `uint64_t` with `%d`, so the announced sleep was unrelated to the real one.
-
-## Gotchas
+- **The wake interval starts short and grows toward what the server asks for.**
+  Measured across one afternoon: 12.3, 12.7, 21.7, 32.5, 36.8 minutes, against a
+  server-sent `X-ESPAPER-SLEEP-SECONDS: 3600`. The device sleeps
+  `sleepUntilEpoch - its own clock` (falling back to the server's figure when the two
+  disagree by more than 600 s), then clamps to `ESP.deepSleepMax() * 0.8`, so the
+  interval tracks how well its clock is synced rather than being a fixed cadence.
+  Do not read a short early interval as the steady state -- an earlier revision of this
+  line claimed a flat ~12 minutes from the first three samples and was wrong. Until
+  39bce7a the serial log could not settle it either: it printed a `uint64_t` with `%d`,
+  so the announced sleep was unrelated to the real one.
 - **`gh` resolves to `upstream` on this repo.** With the ThingPulse remote present,
   `gh workflow run` / `gh run list` target *their* repo and fail confusingly
   (`404: workflow ci.yml not found on the default branch`). `gh repo set-default
