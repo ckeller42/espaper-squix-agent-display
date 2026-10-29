@@ -412,20 +412,15 @@ void handleReset() {
   ESP.restart();  
 }
 
-void handleSave() {
-  Serial.println("Handling 'save' request");
-  WIFI_SSID = server.arg("ssid");
-  WIFI_PASS = server.arg("password");
-  UPDATE_INTERVAL_MINS = server.arg("updateIntervalMins").toInt();
-  TIMEZONE = server.arg("timeZone");
-  NTP_SERVERS = server.arg("ntpServers");
-  String submittedUrl = server.arg("serverUrl");
+// FORK CHANGE (Task 4): one rule for a server URL a person submitted, shared by the web form and
+// the serial console so the two channels cannot drift apart. The form is pre-filled with the
+// current URL, so saving e.g. a new WiFi password re-posts a discovered URL unchanged. That is not
+// a person choosing it: keep its source. Anything else submitted is a person exercising control,
+// and from then on discovery leaves it alone.
+void setServerUrlFromInput(String submittedUrl) {
   if (submittedUrl == "") {
     submittedUrl = SERVER_URL_DEFAULT; // a blanked field means "use the default", never "no server"
   }
-  // FORK CHANGE (Task 4): the form is pre-filled with the current URL, so saving e.g. a new WiFi
-  // password re-posts a discovered URL unchanged. That is not a person choosing it: keep its source.
-  // Anything else typed here is a person exercising control, and from then on discovery leaves it alone.
   if (submittedUrl == SERVER_URL && SERVER_URL_SOURCE == SERVER_URL_SOURCE_DISCOVERED) {
     // unchanged discovered URL: source stays "discovered"
   } else if (submittedUrl == SERVER_URL_DEFAULT) {
@@ -434,8 +429,17 @@ void handleSave() {
     SERVER_URL_SOURCE = SERVER_URL_SOURCE_MANUAL;
   }
   SERVER_URL = submittedUrl;
+}
+
+void handleSave() {
+  Serial.println("Handling 'save' request");
+  WIFI_SSID = server.arg("ssid");
+  WIFI_PASS = server.arg("password");
+  UPDATE_INTERVAL_MINS = server.arg("updateIntervalMins").toInt();
+  TIMEZONE = server.arg("timeZone");
+  NTP_SERVERS = server.arg("ntpServers");
+  setServerUrlFromInput(server.arg("serverUrl"));
   Serial.println(WIFI_SSID);
-  Serial.println(WIFI_PASS);
   Serial.println(UPDATE_INTERVAL_MINS);
   Serial.println(TIMEZONE);
   Serial.println(NTP_SERVERS);
@@ -491,6 +495,31 @@ void registerServerCallbackHandlers() {
   server.on("/delete", handleDelete);
   server.on("/reset", handleReset);
   server.onNotFound(handleNotFound);  
+}
+
+#include "serialconfig.h"  // needs saveConfig() and setServerUrlFromInput(), defined above
+
+// Read one line from the serial console, if a whole one has arrived, and act on it. Called from the
+// config portal's loop beside server.handleClient(), so the two channels are equally live and a
+// person can use whichever one reaches the device.
+void pollSerialConfig() {
+  static String pending = "";
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c != '\n') {
+      pending += c;
+      continue;
+    }
+    SerialConfigOutcome outcome = applySerialConfigCommand(pending);
+    pending = "";
+    if (outcome.reply != "") {
+      Serial.println(outcome.reply);
+    }
+    if (outcome.restart) {
+      Serial.flush();
+      ESP.restart();
+    }
+  }
 }
 
 String getJoinWifiMessage() {
@@ -552,8 +581,10 @@ void startConfigPortal(MiniGrafx *gfx) {
   server.begin();
   Serial.println("HTTP server started");
 
+  Serial.println(F("Serial configuration is live too -- type 'help' for the commands"));
   while (true) {
     server.handleClient();
+    pollSerialConfig();
     yield();
   }
 }

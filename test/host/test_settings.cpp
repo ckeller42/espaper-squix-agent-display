@@ -246,3 +246,150 @@ void run_settings_tests() {
   RUN_TEST(test_the_410_count_survives_the_restart_it_precedes);
   RUN_TEST(test_the_410_count_saturates_instead_of_wrapping_to_zero);
 }
+
+// --- serial configuration ----------------------------------------------------------------------
+// The USB serial line is the only configuration channel that still works when the device's setup
+// access point cannot be reached -- a host that drops the AP association mid-POST, a host with one
+// radio that must stay on the LAN, an AP out of range. Nothing here proves bytes arrive over UART
+// (the host shim has no inbound serial); it proves the command grammar, that "show" masks the
+// password, and that "save" writes a config the firmware's own loadConfig() reads back.
+
+// settings.h declares its globals as file-static, so a second translation unit including
+// configportal.h would get its own copies (and duplicate every non-inline function). These tests
+// therefore live beside test_settings.cpp's, in the one TU that owns the config portal.
+static void resetSerialConfig() {
+  resetUserSettings();
+  DEVICE_FS.files.clear();
+}
+
+static SerialConfigOutcome run(const char *line) { return applySerialConfigCommand(String(line)); }
+
+void test_set_ssid_stores_the_value() {
+  resetSerialConfig();
+  SerialConfigOutcome out = run("set ssid Insel");
+  TEST_ASSERT_EQUAL_STRING("Insel", WIFI_SSID.c_str());
+  TEST_ASSERT_FALSE(out.restart);
+}
+
+void test_a_value_may_contain_spaces() {
+  resetSerialConfig();
+  run("set timezone Europe/Berlin CET-1CEST,M3.5.0,M10.5.0/3");
+  TEST_ASSERT_EQUAL_STRING("Europe/Berlin CET-1CEST,M3.5.0,M10.5.0/3", TIMEZONE.c_str());
+}
+
+void test_a_password_is_taken_verbatim_including_spaces_and_equals() {
+  resetSerialConfig();
+  run("set password a b=c ");
+  TEST_ASSERT_EQUAL_STRING("a b=c ", WIFI_PASS.c_str());
+}
+
+void test_show_never_prints_the_password() {
+  resetSerialConfig();
+  run("set ssid Insel");
+  run("set password hunter2hunter2");
+  String reply = run("show").reply;
+  TEST_ASSERT_NULL(strstr(reply.c_str(), "hunter2hunter2"));
+  TEST_ASSERT_NOT_NULL(strstr(reply.c_str(), "Insel"));
+  TEST_ASSERT_NOT_NULL(strstr(reply.c_str(), "password=(set)"));
+}
+
+void test_show_says_when_no_password_is_set() {
+  resetSerialConfig();
+  TEST_ASSERT_NOT_NULL(strstr(run("show").reply.c_str(), "password=(unset)"));
+}
+
+void test_save_writes_a_config_the_firmware_reads_back() {
+  resetSerialConfig();
+  run("set ssid Insel");
+  run("set password pw");
+  run("set timezone Europe/Berlin CET-1CEST,M3.5.0,M10.5.0/3");
+  TEST_ASSERT_TRUE(run("save").saved);
+  resetUserSettings();
+  TEST_ASSERT_TRUE(loadConfig());
+  TEST_ASSERT_EQUAL_STRING("Insel", WIFI_SSID.c_str());
+  TEST_ASSERT_EQUAL_STRING("pw", WIFI_PASS.c_str());
+}
+
+void test_save_refuses_an_incomplete_config() {
+  resetSerialConfig();
+  run("set ssid Insel");  // no password, no time zone
+  SerialConfigOutcome out = run("save");
+  TEST_ASSERT_FALSE(out.saved);
+  TEST_ASSERT_NOT_NULL(strstr(out.reply.c_str(), "ERR"));
+}
+
+void test_setting_a_server_url_marks_it_as_entered_by_hand() {
+  resetSerialConfig();
+  run("set server http://192.168.178.43:8411");
+  TEST_ASSERT_EQUAL_STRING("http://192.168.178.43:8411", SERVER_URL.c_str());
+  TEST_ASSERT_EQUAL_STRING(SERVER_URL_SOURCE_MANUAL, SERVER_URL_SOURCE.c_str());
+}
+
+void test_blanking_the_server_url_returns_to_the_default_and_to_discoverable() {
+  resetSerialConfig();
+  run("set server http://elsewhere:9000");
+  run("set server");
+  TEST_ASSERT_EQUAL_STRING(SERVER_URL_DEFAULT.c_str(), SERVER_URL.c_str());
+  TEST_ASSERT_EQUAL_STRING("", SERVER_URL_SOURCE.c_str());
+}
+
+void test_interval_is_read_as_a_number() {
+  resetSerialConfig();
+  run("set interval 30");
+  TEST_ASSERT_EQUAL_INT(30, UPDATE_INTERVAL_MINS);
+}
+
+void test_restart_is_reported_to_the_caller() {
+  resetSerialConfig();
+  TEST_ASSERT_TRUE(run("restart").restart);
+}
+
+void test_an_unknown_command_is_refused_and_changes_nothing() {
+  resetSerialConfig();
+  run("set ssid Insel");
+  SerialConfigOutcome out = run("set nonsense x");
+  TEST_ASSERT_NOT_NULL(strstr(out.reply.c_str(), "ERR"));
+  TEST_ASSERT_EQUAL_STRING("Insel", WIFI_SSID.c_str());
+}
+
+void test_surrounding_whitespace_and_cr_are_ignored() {
+  resetSerialConfig();
+  run("  set ssid Insel\r");
+  TEST_ASSERT_EQUAL_STRING("Insel", WIFI_SSID.c_str());
+}
+
+void test_an_empty_line_is_ignored_without_an_error() {
+  resetSerialConfig();
+  SerialConfigOutcome out = run("   ");
+  TEST_ASSERT_EQUAL_STRING("", out.reply.c_str());
+  TEST_ASSERT_FALSE(out.saved);
+  TEST_ASSERT_FALSE(out.restart);
+}
+
+void test_help_lists_every_command() {
+  resetSerialConfig();
+  String reply = run("help").reply;
+  for (const char *name : {"ssid", "password", "timezone", "ntp", "server", "interval", "show",
+                           "save", "restart"}) {
+    TEST_ASSERT_NOT_NULL(strstr(reply.c_str(), name));
+  }
+}
+
+void run_serial_config_tests() {
+  UnitySetTestFile(__FILE__);
+  RUN_TEST(test_set_ssid_stores_the_value);
+  RUN_TEST(test_a_value_may_contain_spaces);
+  RUN_TEST(test_a_password_is_taken_verbatim_including_spaces_and_equals);
+  RUN_TEST(test_show_never_prints_the_password);
+  RUN_TEST(test_show_says_when_no_password_is_set);
+  RUN_TEST(test_save_writes_a_config_the_firmware_reads_back);
+  RUN_TEST(test_save_refuses_an_incomplete_config);
+  RUN_TEST(test_setting_a_server_url_marks_it_as_entered_by_hand);
+  RUN_TEST(test_blanking_the_server_url_returns_to_the_default_and_to_discoverable);
+  RUN_TEST(test_interval_is_read_as_a_number);
+  RUN_TEST(test_restart_is_reported_to_the_caller);
+  RUN_TEST(test_an_unknown_command_is_refused_and_changes_nothing);
+  RUN_TEST(test_surrounding_whitespace_and_cr_are_ignored);
+  RUN_TEST(test_an_empty_line_is_ignored_without_an_error);
+  RUN_TEST(test_help_lists_every_command);
+}

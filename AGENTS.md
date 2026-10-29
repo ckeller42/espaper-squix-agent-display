@@ -27,6 +27,13 @@ device renders screens pushed by an agent via a server on the LAN.
   detection; otherwise it asks when several adapters are present and refuses to
   guess when there is no terminal.
 - `pre-commit install` once per clone — hooks are inert otherwise.
+- **Configure the device over serial**, not only through the setup AP: in config-portal
+  mode the firmware reads commands on the USB line at 115200 (`set ssid <v>`,
+  `set password <v>`, `set timezone <v>`, `set ntp <v>`, `set server <url>`,
+  `set interval <n>`, `show`, `save`, `restart`, `help`). Values run to end of
+  line, so spaces and `=` are kept; `show` never prints the password. The AP
+  path still works and both channels share one URL rule
+  (`setServerUrlFromInput`).
 
 ## Hardware facts (verified on the device, not assumed)
 - Board: ESP8266 WROOM-02, 296×128 Waveshare panel. Programmer is a **CP2102**

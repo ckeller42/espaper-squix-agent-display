@@ -77,6 +77,12 @@ class String {
     size_t p = s_.find(t.s_, from);
     return p == std::string::npos ? -1 : (int)p;
   }
+  // Arduino's String::trim() strips leading and trailing whitespace in place.
+  void trim() {
+    size_t b = s_.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) { s_.clear(); return; }
+    s_ = s_.substr(b, s_.find_last_not_of(" \t\r\n") - b + 1);
+  }
   void replace(const String &from, const String &to) {
     if (from.s_.empty()) return;
     for (size_t p = 0; (p = s_.find(from.s_, p)) != std::string::npos; p += to.s_.size()) s_.replace(p, from.s_.size(), to.s_);
@@ -122,6 +128,12 @@ struct HostSerial {
     vfprintf(stdout, fmt, ap);
     va_end(ap);
   }
+  void flush() { fflush(stdout); }
+  // No inbound serial on the host: pollSerialConfig() compiles and is inert here. The command
+  // grammar is tested by calling applySerialConfigCommand() directly (test_serialconfig.cpp), so
+  // nothing here claims that bytes arriving over UART are framed into lines correctly.
+  int available() { return 0; }
+  int read() { return -1; }
 };
 inline HostSerial Serial;
 

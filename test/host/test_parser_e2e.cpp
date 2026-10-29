@@ -169,6 +169,7 @@ void test_unreachable_server_is_reported_as_minus_two() {
 
 void run_settings_tests();  // test_settings.cpp
 void run_discovery_tests(const std::string &liveUrl);  // test_discovery.cpp
+void run_serial_config_tests();                        // test_serialconfig.cpp
 
 int main() {
   startServer();
@@ -184,6 +185,7 @@ int main() {
   RUN_TEST(test_unreachable_server_is_reported_as_minus_two);
   run_settings_tests();
   run_discovery_tests(serverUrl().c_str());
+  run_serial_config_tests();
   int failed = UNITY_END();
   stopServer();
   return failed;
