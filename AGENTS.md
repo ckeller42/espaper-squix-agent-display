@@ -51,6 +51,11 @@ device renders screens pushed by an agent via a server on the LAN.
   We stay on `eagle.flash.2m512.ld`; `--flash-size` in `flash.sh` must match the
   ldscript, not the physical chip, or the filesystem lands at the wrong offset.
 - Free heap after init: ~45.9 KB. That is the real budget for new features.
+- **The wake cycle is ~12 minutes, whatever the server asks for.** `Board::deepSleep`
+  clamps to `ESP.deepSleepMax() * 0.8`, which on this kit lands near 720 s, so a
+  server-sent `X-ESPAPER-SLEEP-SECONDS: 3600` still wakes the device four times an
+  hour (measured: fetches at 13:56, 14:09, 14:22). Until 39bce7a the log hid this --
+  it printed a `uint64_t` with `%d`, so the announced sleep was unrelated to the real one.
 
 ## Gotchas
 - **`gh` resolves to `upstream` on this repo.** With the ThingPulse remote present,
