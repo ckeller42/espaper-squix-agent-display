@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>  // memcpy below; libc++ pulls it in transitively, GCC does not
 #include <functional>  // EspaperParser.h uses std::function without including it
 #include <map>
 #include <string>

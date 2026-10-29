@@ -9,6 +9,8 @@
 #include <MiniGrafxFonts.h>
 #include <unity.h>
 
+#include <cstring>  // strstr in the assertions below
+
 #include <ESP8266mDNS.h>  // host shim: scripted answers
 
 #include "../../EspaperClient/configportal.h"
