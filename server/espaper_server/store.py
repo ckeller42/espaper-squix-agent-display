@@ -32,7 +32,11 @@ from espaper_server.sources import QuoteSource, Reading, Source, WeatherSource, 
 
 log = logging.getLogger(__name__)
 
-DEFAULT_SLEEP_SECONDS = 3600  # used only when config.json does not say otherwise
+# The design promises a screen that "stays current -- weather shifts, NVDA moves -- refreshing
+# every few minutes". An hour is not a few minutes: with 3600 here the server redrew on its
+# timer while the panel kept an hour-old screen, because this is the figure the device is told
+# to sleep for. config.json overrides it per deployment.
+DEFAULT_SLEEP_SECONDS = 600
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]+")
 _TELEMETRY_PREFIX = "X-ESPAPER-"
 _NEVER_LOGGED = {"SECRET"}
