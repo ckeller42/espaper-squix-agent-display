@@ -6,7 +6,7 @@
 # linux_arm64 binary. On Apple Silicon this image runs under emulation; on
 # GitHub Actions' ubuntu runners it runs natively. Same image, same artifacts.
 ARG BUILD_PLATFORM=linux/amd64
-FROM --platform=${BUILD_PLATFORM} python:3.12-slim-bookworm
+FROM --platform=${BUILD_PLATFORM} python:3.15-slim-bookworm
 
 # Pinned so a rebuild six months from now produces the same compiler.
 ARG PLATFORMIO_VERSION=6.2.0
